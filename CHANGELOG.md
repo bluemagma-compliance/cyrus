@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Updated `@anthropic-ai/claude-agent-sdk` to v0.2.132 and `@anthropic-ai/sdk` to `^0.95.0`** — Bumps the bundled Claude Code binary to v2.1.132 (parity through v0.2.124–v0.2.132; highlights include `applyFlagSettings()` support in v0.2.132 and `origin` added to result messages in v0.2.126) and the Anthropic TypeScript SDK to `^0.95.0`. The available tool list in `packages/claude-runner/src/config.ts` is unchanged from v0.2.123 (verified via `./scripts/extract-claude-tools.sh`). See the [claude-agent-sdk changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md) for full details. (Supersedes [#1188](https://github.com/cyrusagents/cyrus/pull/1188) / [CYPACK-1175](https://linear.app/ceedar/issue/CYPACK-1175) which was closed and canceled.) ([CYPACK-1179](https://linear.app/ceedar/issue/CYPACK-1179), [#1189](https://github.com/cyrusagents/cyrus/pull/1189))
+
 ## [0.2.51] - 2026-04-30
 
 ### Changed
