@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- **Per-thread auto-memory for Slack chat sessions** — Slack-triggered chat sessions now get their own persistent Claude auto-memory directory, namespaced per Slack thread (`<cyrusHome>/slack-workspaces/<thread-key>/memory/`). Memory persists across resumes in the same thread without leaking between threads. ([CYPACK-1190](https://linear.app/ceedar/issue/CYPACK-1190))
+- **Per-thread auto-memory for Slack chat sessions** — Slack-triggered chat sessions now get their own persistent Claude auto-memory directory, namespaced per Slack thread (`<cyrusHome>/slack-workspaces/<thread-key>/memory/`). Memory persists across resumes in the same thread without leaking between threads. ([CYPACK-1190](https://linear.app/ceedar/issue/CYPACK-1190), [#1199](https://github.com/cyrusagents/cyrus/pull/1199))
 
 ### Changed
 - **Slack mention prompt nudges agents toward `linear_agent_give_feedback` for live child sessions** — When responding in Slack, Cyrus is now told to send mid-flight corrections to a running child agent session via `mcp__cyrus-tools__linear_agent_give_feedback` instead of falling back to `mcp__linear__save_comment`. Produces a stronger signal when correcting work that is already in progress. ([CYPACK-1189](https://linear.app/ceedar/issue/CYPACK-1189), [#1198](https://github.com/cyrusagents/cyrus/pull/1198))
