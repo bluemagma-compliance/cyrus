@@ -334,6 +334,29 @@ async function startServer(): Promise<void> {
 			}
 		});
 
+		// List active chat threads (threadKey → sessionId)
+		fastify.get("/cli/chat-threads", async (_request, reply) => {
+			reply.send({ ok: true, threads: edgeWorker.listChatThreads() });
+		});
+
+		// Fetch the last assistant reply for a chat thread (polled by F1 to
+		// observe agent output when no real Slack channel is available).
+		fastify.get("/cli/chat-thread", async (request, reply) => {
+			const query = (request.query as { threadKey?: string }) ?? {};
+			if (!query.threadKey) {
+				reply.code(400).send({ ok: false, error: "threadKey required" });
+				return;
+			}
+			const result = edgeWorker.getChatThreadLastReply(query.threadKey);
+			if (!result) {
+				reply
+					.code(404)
+					.send({ ok: false, error: `thread not found: ${query.threadKey}` });
+				return;
+			}
+			reply.send({ ok: true, threadKey: query.threadKey, ...result });
+		});
+
 		// Start EdgeWorker
 		await edgeWorker.start();
 

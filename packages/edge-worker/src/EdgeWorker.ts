@@ -2383,6 +2383,52 @@ ${taskSection}`;
 	}
 
 	/**
+	 * Test-only: list active chat threads (threadKey → sessionId).
+	 */
+	listChatThreads(): Array<{ threadKey: string; sessionId: string }> {
+		if (!this.chatSessionHandler) return [];
+		return this.chatSessionHandler.listThreads();
+	}
+
+	/**
+	 * Test-only: fetch the last assistant text reply for a chat thread.
+	 * Returns null when the thread or runner is unknown, or no assistant
+	 * message has been produced yet.
+	 */
+	getChatThreadLastReply(threadKey: string): {
+		text: string;
+		isRunning: boolean;
+		messageCount: number;
+	} | null {
+		if (!this.chatSessionHandler) return null;
+		const runner = this.chatSessionHandler.getRunnerForThread(threadKey);
+		if (!runner) return null;
+		const messages = runner.getMessages();
+		const lastAssistant = [...messages]
+			.reverse()
+			.find((m) => m.type === "assistant");
+		let text = "";
+		if (
+			lastAssistant &&
+			lastAssistant.type === "assistant" &&
+			"message" in lastAssistant
+		) {
+			const msg = lastAssistant as {
+				message: { content: Array<{ type: string; text?: string }> };
+			};
+			const block = msg.message.content?.find(
+				(b) => b.type === "text" && b.text,
+			);
+			if (block?.text) text = block.text;
+		}
+		return {
+			text,
+			isRunning: runner.isRunning(),
+			messageCount: messages.length,
+		};
+	}
+
+	/**
 	 * Stop the edge worker
 	 */
 	async stop(): Promise<void> {
