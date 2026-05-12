@@ -40,17 +40,20 @@ Building all packages ensures `workspace:*` dependencies are resolved before pub
 
 `cyrus-core` depends on `claude-runner` via `workspace:*`. When `cyrus-core` is published, that `workspace:*` is rewritten to the version currently in `packages/claude-runner/package.json`. If that version isn't actually on npm yet (because `claude-runner` has local changes since its last publish), consumers installing `cyrus-core@test` will fail to resolve the dependency.
 
-Check:
+Run both of these deterministic checks:
 
 ```bash
-# Current local version
-node -p "require('./packages/claude-runner/package.json').version"
+# (a) Is the local claude-runner version already on npm?
+LOCAL_CR=$(node -p "require('./packages/claude-runner/package.json').version")
+npm view "cyrus-claude-runner@${LOCAL_CR}" version 2>/dev/null
 
-# What's on npm
-npm view cyrus-claude-runner versions --json
+# (b) Does claude-runner have uncommitted/unpushed source changes since its last publish?
+git diff --quiet HEAD -- packages/claude-runner/src packages/claude-runner/package.json && echo "clean" || echo "dirty"
 ```
 
-If the local version of `claude-runner` is NOT already published on npm (or has uncommitted/unreleased source changes you want included), republish it as a test prerelease:
+Republish `claude-runner` if **either**: (a) returns nothing (local version is not on npm), **or** (b) prints `dirty`. If both pass cleanly, skip this step. If you're unsure, ask the user.
+
+To republish:
 
 ```bash
 # Determine the next -test.N for claude-runner (same algorithm as cyrus-core below)
@@ -69,20 +72,21 @@ Algorithm:
 
 1. Read the current version from `packages/core/package.json` (e.g. `0.1.22`).
 2. Bump the patch (e.g. `0.1.23`).
-3. Append `-test.N`, starting at `N = 0` and incrementing if `<bumped>-test.N` already exists on npm.
+3. Append `-test.N`, starting at `N = 0` and incrementing while `<bumped>-test.N` already exists on npm (including aborted/stale prior attempts).
 
-For example, if the current version is `0.1.22`:
-
-- Try `0.1.23-test.0`.
-- If `npm view cyrus-core@0.1.23-test.0 version` returns a value, try `0.1.23-test.1`, then `-test.2`, etc.
-
-To check existing prereleases:
+Use this one-liner to find existing `-test.N` versions for the bumped patch and pick the next N:
 
 ```bash
-npm view cyrus-core versions --json
+BUMPED=0.1.23   # the patch-bumped base, no suffix
+npm view cyrus-core versions --json \
+  | jq -r '.[]' \
+  | grep -E "^${BUMPED}-test\.[0-9]+$" \
+  | awk -F'test.' '{print $2}' \
+  | sort -n | tail -1
+# If empty, use N=0. Otherwise use (max + 1).
 ```
 
-Write the chosen version back into `packages/core/package.json`. Do NOT commit this change — leave it as a local working-tree edit so the developer can decide whether to keep it.
+Write the chosen version (e.g. `0.1.23-test.0`) back into `packages/core/package.json`. Do NOT commit this change — leave it as a local working-tree edit so the developer can decide whether to keep it.
 
 ### 5. Publish `cyrus-core` with the `test` dist-tag
 
@@ -97,7 +101,15 @@ Using `--tag test` means:
 - `npm install cyrus-core@test` will install this version.
 - The `latest` dist-tag is **not** moved, so production installs (`npm install cyrus-core`) are unaffected.
 
-### 6. Print install instructions
+### 6. Verify the dist-tags landed correctly
+
+```bash
+npm view cyrus-core dist-tags
+```
+
+Confirm that `latest` is unchanged from before the publish and `test` now points to the version you just published. If `latest` moved, something is wrong — stop and investigate before telling anyone to install it.
+
+### 7. Print install instructions
 
 After publishing, print both forms so the developer can copy/paste:
 
@@ -118,6 +130,7 @@ If `claude-runner` was also republished in step 3, include its version too.
 - Always use `--tag test` so the `latest` dist-tag is preserved for real releases.
 - Prerelease versions (anything with a `-` suffix like `-test.0`) are never auto-installed by `npm install cyrus-core` without an explicit tag or version spec, so this is safe to run repeatedly.
 - Run `pnpm install` after publishing `claude-runner` (if applicable) so the lockfile reflects the new published version before `cyrus-core` is built/published.
+- `pnpm install` + `pnpm build` from root takes ~3 minutes combined on a clean tree — plan command timeouts accordingly.
 
 ## Examples
 
