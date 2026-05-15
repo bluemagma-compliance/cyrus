@@ -28,6 +28,7 @@
 		"@ngrok/ngrok": "^1.5.1",
 		"chokidar": "^4.0.3",
 		"computesdk": "^4.0.0",
+		"cyrus-agent-runtime": "workspace:*",
 		"cyrus-claude-runner": "workspace:*",
 		"cyrus-cloudflare-tunnel-client": "workspace:*",
 		"cyrus-codex-runner": "workspace:*",

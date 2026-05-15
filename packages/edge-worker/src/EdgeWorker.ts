@@ -137,11 +137,11 @@ import {
 } from "cyrus-slack-event-transport";
 import { Sessions, streamableHttp } from "fastify-mcp";
 import { ActivityPoster } from "./ActivityPoster.js";
+import { AgentChatSessionHandler } from "./AgentChatSessionHandler.js";
 import { AgentSessionManager } from "./AgentSessionManager.js";
 import { AskUserQuestionHandler } from "./AskUserQuestionHandler.js";
 import { AttachmentService } from "./AttachmentService.js";
 import { LiveChatRepositoryProvider } from "./ChatRepositoryProvider.js";
-import { ChatSessionHandler } from "./ChatSessionHandler.js";
 import { ConfigManager, type RepositoryChanges } from "./ConfigManager.js";
 import { DefaultSkillsDeployer } from "./DefaultSkillsDeployer.js";
 import { EgressProxy } from "./EgressProxy.js";
@@ -206,7 +206,7 @@ export class EdgeWorker extends EventEmitter {
 	private gitHubAppTokenProvider: GitHubAppTokenProvider | null = null; // Self-hosted GitHub App token minting
 	private gitLabEventTransport: GitLabEventTransport | null = null; // GitLab event transport for forwarded GitLab webhooks
 	private slackEventTransport: SlackEventTransport | null = null;
-	private chatSessionHandler: ChatSessionHandler<SlackWebhookEvent> | null =
+	private chatSessionHandler: AgentChatSessionHandler<SlackWebhookEvent> | null =
 		null;
 	private gitHubCommentService: GitHubCommentService; // Service for posting comments back to GitHub PRs
 	private gitLabCommentService: GitLabCommentService; // Service for posting comments back to GitLab MRs
@@ -1015,28 +1015,18 @@ export class EdgeWorker extends EventEmitter {
 			);
 		}
 
-		this.chatSessionHandler = new ChatSessionHandler(
+		this.chatSessionHandler = new AgentChatSessionHandler(
 			slackAdapter,
 			{
 				cyrusHome: this.cyrusHome,
 				chatRepositoryProvider,
-				runnerConfigBuilder: this.runnerConfigBuilder,
-				createRunner: (config) => {
-					const runnerType = this.runnerSelectionService.getDefaultRunner();
-					return this.createRunnerForType(runnerType, {
-						...config,
-						model: this.getDefaultModelForRunner(runnerType),
-						fallbackModel: this.getDefaultFallbackModelForRunner(runnerType),
-					});
-				},
 				onWebhookStart: () => {
 					this.activeWebhookCount++;
 				},
 				onWebhookEnd: () => {
 					this.activeWebhookCount--;
 				},
-				onStateChange: () => this.savePersistedState(),
-				onClaudeError: (error) => this.handleClaudeError(error),
+				onError: (error) => this.handleClaudeError(error),
 			},
 			this.logger,
 		);
@@ -2392,40 +2382,18 @@ ${taskSection}`;
 
 	/**
 	 * Test-only: fetch the last assistant text reply for a chat thread.
-	 * Returns null when the thread or runner is unknown, or no assistant
-	 * message has been produced yet.
+	 *
+	 * NOTE: deliberately disabled on this branch (agent-runtime-backed
+	 * Slack chat). The previous implementation reached into the
+	 * IAgentRunner's message list, which `AgentChatSessionHandler` does
+	 * not expose. F1 tests that depended on this need to be reworked.
 	 */
-	getChatThreadLastReply(threadKey: string): {
+	getChatThreadLastReply(_threadKey: string): {
 		text: string;
 		isRunning: boolean;
 		messageCount: number;
 	} | null {
-		if (!this.chatSessionHandler) return null;
-		const runner = this.chatSessionHandler.getRunnerForThread(threadKey);
-		if (!runner) return null;
-		const messages = runner.getMessages();
-		const lastAssistant = [...messages]
-			.reverse()
-			.find((m) => m.type === "assistant");
-		let text = "";
-		if (
-			lastAssistant &&
-			lastAssistant.type === "assistant" &&
-			"message" in lastAssistant
-		) {
-			const msg = lastAssistant as {
-				message: { content: Array<{ type: string; text?: string }> };
-			};
-			const block = msg.message.content?.find(
-				(b) => b.type === "text" && b.text,
-			);
-			if (block?.text) text = block.text;
-		}
-		return {
-			text,
-			isRunning: runner.isRunning(),
-			messageCount: messages.length,
-		};
+		return null;
 	}
 
 	/**
@@ -2445,15 +2413,10 @@ ${taskSection}`;
 			);
 		}
 
-		// get all agent runners (including chat platform sessions)
+		// Stop all issue-session agent runners.
 		const agentRunners: IAgentRunner[] = [
 			...this.agentSessionManager.getAllAgentRunners(),
 		];
-		if (this.chatSessionHandler) {
-			agentRunners.push(...this.chatSessionHandler.getAllRunners());
-		}
-
-		// Kill all agent processes with null checking
 		for (const runner of agentRunners) {
 			if (runner) {
 				try {
@@ -2461,6 +2424,15 @@ ${taskSection}`;
 				} catch (error) {
 					this.logger.error("Error stopping Claude runner:", error);
 				}
+			}
+		}
+
+		// Tear down chat platform sessions (agent-runtime-backed).
+		if (this.chatSessionHandler) {
+			try {
+				await this.chatSessionHandler.shutdown();
+			} catch (error) {
+				this.logger.error("Error shutting down chat session handler:", error);
 			}
 		}
 
@@ -5063,24 +5035,6 @@ ${taskSection}`;
 	 */
 	private async fetchIssueLabels(issue: Issue): Promise<string[]> {
 		return this.promptBuilder.fetchIssueLabels(issue);
-	}
-
-	/**
-	 * Resolve default model for a given runner from config with sensible built-in defaults.
-	 * Supports legacy config keys for backwards compatibility.
-	 */
-	private getDefaultModelForRunner(runnerType: RunnerType): string {
-		return this.runnerSelectionService.getDefaultModelForRunner(runnerType);
-	}
-
-	/**
-	 * Resolve default fallback model for a given runner from config with sensible built-in defaults.
-	 * Supports legacy Claude fallback key for backwards compatibility.
-	 */
-	private getDefaultFallbackModelForRunner(runnerType: RunnerType): string {
-		return this.runnerSelectionService.getDefaultFallbackModelForRunner(
-			runnerType,
-		);
 	}
 
 	/**
