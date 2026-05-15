@@ -28,6 +28,7 @@ describe("config", () => {
 				"TaskGet",
 				"TaskList",
 				"NotebookEdit",
+				"LSP",
 				"Skill",
 				"AskUserQuestion",
 				"SendMessage",
@@ -39,7 +40,6 @@ describe("config", () => {
 				"CronCreate",
 				"CronDelete",
 				"CronList",
-				"RemoteTrigger",
 				"ScheduleWakeup",
 				"Monitor",
 				"TaskOutput",
@@ -68,9 +68,10 @@ describe("config", () => {
 				"TaskOutput",
 				"EnterPlanMode",
 				"ExitPlanMode",
+				"LSP",
 				"ToolSearch",
 			]);
-			expect(readOnlyTools).toHaveLength(16);
+			expect(readOnlyTools).toHaveLength(17);
 		});
 
 		it("should define write tools", () => {

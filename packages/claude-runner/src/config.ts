@@ -39,6 +39,9 @@ export const availableTools = [
 	// Notebook tools
 	"NotebookEdit",
 
+	// IDE tools
+	"LSP",
+
 	// Skills - enables Claude to use packaged capabilities (SKILL.md files)
 	// See: https://platform.claude.com/docs/en/agent-sdk/skills
 	"Skill",
@@ -58,7 +61,6 @@ export const availableTools = [
 	"CronCreate",
 	"CronDelete",
 	"CronList",
-	"RemoteTrigger",
 	"ScheduleWakeup",
 
 	// Monitoring and task lifecycle
@@ -97,6 +99,7 @@ export const readOnlyTools: ToolName[] = [
 	"TaskOutput",
 	"EnterPlanMode",
 	"ExitPlanMode",
+	"LSP",
 	"ToolSearch",
 ];
 
