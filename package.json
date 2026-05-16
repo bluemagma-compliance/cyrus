@@ -82,6 +82,9 @@
 			"@opentelemetry/otlp-transformer>protobufjs": ">=8.0.2",
 			"@anthropic-ai/sdk": ">=0.91.1",
 			"@daytonaio/sdk": ">=0.175.0"
+		},
+		"patchedDependencies": {
+			"@daytonaio/sdk@0.175.0": "patches/@daytonaio__sdk@0.175.0.patch"
 		}
 	},
 	"lint-staged": {

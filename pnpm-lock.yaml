@@ -36,6 +36,11 @@ overrides:
 
 packageExtensionsChecksum: sha256-SAGU0eZjbtlthDg7QgtdUpUDPvSoDlnVKHwpQVguKnQ=
 
+patchedDependencies:
+  '@daytonaio/sdk@0.175.0':
+    hash: 2b2d1e24a8cd4da511937cc2273b84e85ac87d55a22542878b135b97ce3f9978
+    path: patches/@daytonaio__sdk@0.175.0.patch
+
 importers:
 
   .:
@@ -5217,7 +5222,7 @@ snapshots:
   '@computesdk/daytona@1.7.26(ws@8.20.0)':
     dependencies:
       '@computesdk/provider': 2.0.0
-      '@daytonaio/sdk': 0.175.0(ws@8.20.0)
+      '@daytonaio/sdk': 0.175.0(patch_hash=2b2d1e24a8cd4da511937cc2273b84e85ac87d55a22542878b135b97ce3f9978)(ws@8.20.0)
       computesdk: 4.0.0
     transitivePeerDependencies:
       - aws-crt
@@ -5285,7 +5290,7 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  '@daytonaio/sdk@0.175.0(ws@8.20.0)':
+  '@daytonaio/sdk@0.175.0(patch_hash=2b2d1e24a8cd4da511937cc2273b84e85ac87d55a22542878b135b97ce3f9978)(ws@8.20.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1047.0
       '@aws-sdk/lib-storage': 3.1047.0(@aws-sdk/client-s3@3.1047.0)
