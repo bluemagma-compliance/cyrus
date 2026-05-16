@@ -46,6 +46,13 @@
 		"onlyBuiltDependencies": [
 			"sqlite3"
 		],
+		"packageExtensions": {
+			"@daytonaio/sdk": {
+				"dependencies": {
+					"tslib": "^2"
+				}
+			}
+		},
 		"overrides": {
 			"jws": ">=4.0.1",
 			"@modelcontextprotocol/sdk": ">=1.26.0",
