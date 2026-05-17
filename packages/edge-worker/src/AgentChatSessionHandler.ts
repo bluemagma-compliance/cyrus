@@ -254,6 +254,11 @@ export class AgentChatSessionHandler<TEvent> {
 							name: `cyrus-slack-${sessionId}`,
 							workingDirectory: DAYTONA_WORKING_DIR,
 							timeoutMs: 300_000,
+							// Pause the sandbox between Slack messages so we
+							// stop paying for idle compute. Daytona preserves
+							// on-disk state during stop, so the next turn's
+							// `--continue` finds the prior `.claude/` intact.
+							destroyWhileInactive: true,
 							metadata: {
 								purpose: "cyrus-slack-chat",
 								threadKey,

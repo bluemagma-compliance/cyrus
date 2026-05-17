@@ -137,6 +137,24 @@ export interface RuntimeSandboxConfig {
 	metadata?: Record<string, unknown>;
 	volumes?: RuntimeVolumeConfig[];
 	networkEgress?: RuntimeNetworkEgressConfig;
+	/**
+	 * When `true`, the runtime "pauses" the underlying sandbox while no
+	 * `session.run()` is in flight and resumes it on the next `run()`.
+	 *
+	 * For Daytona this maps to `sandbox.stop()` / `sandbox.start()` —
+	 * stopped sandboxes preserve all on-disk state (so Claude's
+	 * `~/.claude/` survives) and free up compute. Restart is a few
+	 * seconds, far cheaper than a from-scratch sandbox create + setup
+	 * commands.
+	 *
+	 * For the local sandbox the flag is a no-op (local sessions are
+	 * always free).
+	 *
+	 * Trade-off: compute cost vs. resume latency. You stop paying for
+	 * an idle warm sandbox between turns at the cost of a few-second
+	 * resume on the next run.
+	 */
+	destroyWhileInactive?: boolean;
 }
 
 export interface RuntimeHarnessConfig {

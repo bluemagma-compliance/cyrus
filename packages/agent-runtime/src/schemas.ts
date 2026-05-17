@@ -52,6 +52,7 @@ export const RuntimeSandboxConfigSchema = z.object({
 		)
 		.optional(),
 	networkEgress: RuntimeNetworkEgressConfigSchema.optional(),
+	destroyWhileInactive: z.boolean().optional(),
 });
 
 export const RuntimeHarnessConfigSchema = z.object({

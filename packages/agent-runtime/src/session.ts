@@ -7,6 +7,7 @@ import {
 	materializeRepositoryIntoSandbox,
 	syncFolderBackToHost,
 } from "./materializers/index.js";
+// (Daytona stop/start support — see pauseSandboxIfApplicable.)
 import type {
 	AgentSession,
 	AgentSessionResult,
@@ -91,6 +92,30 @@ function resolveAgentSessionsRoot(configuredRoot: string | undefined): string {
 	return isAbsolute(root) ? root : resolve(process.cwd(), root);
 }
 
+/**
+ * Try to fetch a native @daytonaio/sdk Sandbox out of a ComputeSDK-
+ * wrapped sandbox via the `getInstance()` escape hatch. Used by the
+ * destroyWhileInactive code path to call `.start()` / `.stop()` on the
+ * native sandbox (ComputeSDK doesn't expose lifecycle control).
+ *
+ * Returns `undefined` for sandboxes that aren't Daytona-shaped (e.g.
+ * local provider, or a Daytona sandbox wrapped without `getInstance`).
+ */
+function tryNativeDaytonaSandbox(
+	sandbox: RunnerSandbox,
+): { start(): Promise<void>; stop(): Promise<void> } | undefined {
+	const candidate = (
+		sandbox as unknown as { sandbox?: { getInstance?: () => unknown } }
+	).sandbox;
+	const instance = candidate?.getInstance?.();
+	if (!instance || typeof instance !== "object") return undefined;
+	const obj = instance as { start?: unknown; stop?: unknown };
+	if (typeof obj.start === "function" && typeof obj.stop === "function") {
+		return obj as { start(): Promise<void>; stop(): Promise<void> };
+	}
+	return undefined;
+}
+
 export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 	readonly sessionId: string;
 	readonly harness: NormalizedAgentSessionConfig["harness"]["kind"];
@@ -115,6 +140,17 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 	private sandboxDestroyed = false;
 	private sandboxDestroyPromise?: Promise<void>;
 
+	private readonly sandbox: RunnerSandbox;
+	/**
+	 * When `true`, the session pauses the underlying sandbox between
+	 * runs (Daytona: `stop()`) and resumes it on the next `run()`. The
+	 * sandbox itself is the same object across runs — only its
+	 * running/stopped state toggles. State on disk inside the sandbox
+	 * (including `~/.claude/`) is preserved by Daytona during stop.
+	 */
+	private readonly destroyWhileInactive: boolean;
+	private sandboxIsPaused = false;
+
 	// Per-run state — created fresh in run(), cleared in finally.
 	private currentRunAbort?: AbortController;
 	private currentInputBuffer?: AsyncEventBuffer<string>;
@@ -123,17 +159,77 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 	constructor(
 		private readonly config: NormalizedAgentSessionConfig,
 		private readonly adapter: HarnessAdapter,
-		private readonly sandbox: RunnerSandbox,
+		sandbox: RunnerSandbox,
 		private readonly callbacks: RuntimeCallbacks = {},
 	) {
 		super();
 		this.sessionId = config.sessionId;
 		this.harness = adapter.kind;
 		this.events = this.eventBuffer;
+		this.sandbox = sandbox;
 		this.sessionStateDir = join(
 			resolveAgentSessionsRoot(config.agentSessionsRoot),
 			this.sessionId,
 		);
+		this.destroyWhileInactive =
+			Boolean(config.sandbox.destroyWhileInactive) &&
+			config.sandbox.provider === "daytona";
+	}
+
+	/**
+	 * Resume the sandbox if it was paused after a previous run.
+	 * No-op on first run (sandbox is freshly created and running) and
+	 * when destroyWhileInactive is off.
+	 */
+	private async resumeSandboxIfApplicable(): Promise<void> {
+		if (!this.destroyWhileInactive) return;
+		if (!this.sandboxIsPaused) return;
+		const native = tryNativeDaytonaSandbox(this.sandbox);
+		if (!native) {
+			await this.emitEvent(
+				this.createEvent("sandbox.resume.skipped", {
+					reason: "no native start/stop on sandbox (provider not Daytona?)",
+				}),
+			);
+			return;
+		}
+		await this.emitEvent(this.createEvent("sandbox.resume.started", {}));
+		const t0 = Date.now();
+		await native.start();
+		this.sandboxIsPaused = false;
+		await this.emitEvent(
+			this.createEvent("sandbox.resume.completed", {
+				durationMs: Date.now() - t0,
+			}),
+		);
+	}
+
+	/**
+	 * Pause the sandbox between runs so the operator stops paying for
+	 * idle compute. State on disk inside the sandbox is preserved.
+	 */
+	private async pauseSandboxIfApplicable(): Promise<void> {
+		if (!this.destroyWhileInactive) return;
+		if (this.sandboxIsPaused) return;
+		const native = tryNativeDaytonaSandbox(this.sandbox);
+		if (!native) return;
+		await this.emitEvent(this.createEvent("sandbox.pause.started", {}));
+		const t0 = Date.now();
+		try {
+			await native.stop();
+			this.sandboxIsPaused = true;
+			await this.emitEvent(
+				this.createEvent("sandbox.pause.completed", {
+					durationMs: Date.now() - t0,
+				}),
+			);
+		} catch (err) {
+			await this.emitEvent(
+				this.createEvent("sandbox.pause.failed", {
+					error: err instanceof Error ? err.message : String(err),
+				}),
+			);
+		}
 	}
 
 	/**
@@ -156,6 +252,12 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 		let runStopped = false;
 
 		try {
+			// destroyWhileInactive mode: resume the sandbox if we paused it
+			// after a previous run. State on disk (incl. `~/.claude/`)
+			// persists across stop/start so this is cheap and Claude's
+			// `--continue` still finds the prior session.
+			await this.resumeSandboxIfApplicable();
+
 			if (!this.materializationDone) {
 				await this.ensureSessionStateDir();
 				await this.materializeFiles();
@@ -173,10 +275,17 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 				command.command,
 				...command.args.map(shellQuote),
 			].join(" ");
-			const env = {
-				HOME: this.sessionStateDir,
+			// HOME isn't overridden by the runtime:
+			// - Local provider uses the host's real HOME so the user's
+			//   already-logged-in `~/.claude/` is visible.
+			// - Daytona sandbox uses its natural HOME (e.g. /home/daytona).
+			//   In destroyWhileInactive mode the sandbox is paused (not
+			//   destroyed) between runs — its on-disk state is preserved
+			//   by Daytona during stop, so `.claude/projects/...` survives
+			//   and Claude `--continue` picks up the prior session.
+			const env: Record<string, string> = {
 				...this.config.env,
-				...command.env,
+				...(command.env ?? {}),
 				...this.materializeSecrets(),
 			};
 			const cwd = this.config.sandbox.workingDirectory;
@@ -273,6 +382,11 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 			inputBuffer.close();
 			this.currentInputBuffer = undefined;
 			this.currentRunAbort = undefined;
+			// destroyWhileInactive: pause the sandbox so the operator stops
+			// paying for idle compute. State on disk is preserved by Daytona
+			// during stop, so the next run()'s resumeSandboxIfApplicable()
+			// brings it back instantly with `--continue`-friendly state.
+			await this.pauseSandboxIfApplicable();
 		}
 	}
 
@@ -311,8 +425,9 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 		if (this.currentRunAbort) {
 			await this.stop("destroy");
 		}
-		// Sync any read-write folders back to the host before the sandbox
-		// disappears — last chance to capture the agent's edits.
+		// If we paused the sandbox after the last run, resume it briefly
+		// so the syncFoldersBack walk has something to read from.
+		await this.resumeSandboxIfApplicable();
 		await this.syncFoldersBack();
 		await this.destroySandboxOnce();
 		this.eventBuffer.close();
