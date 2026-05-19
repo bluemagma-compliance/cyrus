@@ -1025,6 +1025,7 @@ export class EdgeWorker extends EventEmitter {
 					this.activeWebhookCount--;
 				},
 				onError: (error) => this.handleClaudeError(error),
+				provider: this.config.defaultProvider,
 			},
 			this.logger,
 		);

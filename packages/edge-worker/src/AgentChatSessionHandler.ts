@@ -1,6 +1,10 @@
-import type { AgentSession, TranscriptEvent } from "cyrus-agent-runtime";
+import type {
+	AgentSession,
+	CreateAgentSessionConfig,
+	TranscriptEvent,
+} from "cyrus-agent-runtime";
 import { createAgentSession } from "cyrus-agent-runtime";
-import type { ILogger } from "cyrus-core";
+import type { ILogger, ProviderType } from "cyrus-core";
 import { createLogger } from "cyrus-core";
 
 /**
@@ -36,6 +40,26 @@ export interface AgentChatSessionHandlerDeps {
 	 * session.
 	 */
 	idleTtlMs?: number;
+	/**
+	 * Sandbox provider to run sessions in. Defaults to `"local"`.
+	 *
+	 * - `"local"`: harness runs directly on the host. The host must have
+	 *   `claude` on `PATH` (or `claudeCliPath` set). No `DAYTONA_API_KEY`
+	 *   required. `destroyWhileInactive` is a no-op for this provider.
+	 * - `"daytona"`: each thread gets a Daytona sandbox. Requires
+	 *   `DAYTONA_API_KEY` in the environment; Claude CLI is installed
+	 *   inside the sandbox via `npm install -g`. Idle sandboxes are
+	 *   paused between turns (preserving on-disk state for `--continue`)
+	 *   and destroyed after the idle TTL.
+	 */
+	provider?: ProviderType;
+	/**
+	 * Override the `claude` binary path for local sessions. When unset,
+	 * the harness resolves `claude` via the host's `PATH`. Ignored for
+	 * the daytona provider, which always uses the in-sandbox install
+	 * path.
+	 */
+	claudeCliPath?: string;
 }
 
 const DEFAULT_IDLE_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -87,42 +111,57 @@ interface ThreadState<TEvent> {
  * `createAgentSession` + multi-turn `session.run()`. Replaces the old
  * `ChatSessionHandler` + `IAgentRunner` + `AgentSessionManager` stack.
  *
- * **Hardwired to Daytona + Claude.** First message in a thread spawns a
- * fresh Daytona sandbox and installs `@anthropic-ai/claude-code` inside it.
- * The sandbox is kept warm; follow-up messages reuse it via Claude's
- * `--continue` flag (the runtime sets the session's HOME to a persistent
- * per-session directory so `.claude/` survives between turns). After an
- * idle TTL the handler destroys the sandbox and frees the slot.
+ * Provider-aware: each handler instance is configured for either the
+ * `local` or `daytona` sandbox provider via `deps.provider` (defaulting
+ * to `local`). The first message in a thread creates a fresh agent
+ * session against that provider; follow-up messages reuse it via
+ * Claude's `--continue` flag. After `idleTtlMs` of inactivity the
+ * handler destroys the session and frees the slot.
  *
- * Requires the following environment variables:
+ * **Provider details**
  *
- * - `DAYTONA_API_KEY` — sandbox provider auth (refuses to construct without).
+ * - **local** — harness runs directly on the host. The host must have
+ *   `claude` reachable via `PATH` (or pass `deps.claudeCliPath`).
+ *   `destroyWhileInactive` is a no-op; eviction still calls
+ *   `session.destroy()` to clean up the per-session HOME under
+ *   `~/.cyrus-agent-sessions/`.
+ *
+ * - **daytona** — each thread gets a Daytona sandbox seeded with
+ *   `@anthropic-ai/claude-code` via `npm install -g`. Requires
+ *   `DAYTONA_API_KEY`. Idle sandboxes are paused between turns
+ *   (`destroyWhileInactive: true`) so on-disk state survives but
+ *   compute is freed; eviction destroys them outright.
+ *
+ * **Common requirements**
+ *
  * - `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_AUTH_TOKEN`) — Claude auth
- *   inside the sandbox.
+ *   for both providers. The handler exposes whichever is set to the
+ *   harness as a secret.
  *
- * Brutal cuts compared to the legacy `ChatSessionHandler` (deliberate,
- * spike-only):
+ * **Known limitations**
  *
- * - **No mid-flight stream injection.** A second message while the thread's
- *   session is still answering the first triggers `notifyBusy()` rather
- *   than injecting into stdin. Future work: route through
- *   `AgentSession.addMessage()` with `interactiveInput: true`.
- * - **No MCP servers.** `cyrus-agent-runtime` doesn't yet wire them through
- *   to the harness CLI; the cyrus-tools in-process SDK server wouldn't
- *   translate across the subprocess boundary anyway. Slack chat runs with
- *   the Claude CLI default toolset only.
- * - **Claude harness only.** No runner-selection layer.
- * - **Daytona compute only.** No local-sandbox fallback for chat.
- * - **No cross-process recovery.** EdgeWorker restart drops the warm-thread
- *   map; next mention is a cold start. Daytona's own autoStopInterval
- *   eventually reclaims any orphaned sandboxes.
+ * - **No mid-flight stream injection.** A second message while the
+ *   thread's session is still answering the first triggers
+ *   `notifyBusy()` rather than injecting into stdin. Future work:
+ *   route through `AgentSession.addMessage()` with
+ *   `interactiveInput: true`.
+ * - **No MCP servers.** `cyrus-agent-runtime` doesn't yet thread them
+ *   through to the harness CLI; the cyrus-tools in-process SDK
+ *   server wouldn't translate across the subprocess boundary anyway.
+ *   Chat sessions run with the Claude CLI default toolset only.
+ * - **Claude harness only.** No runner-selection layer for chat yet.
+ * - **No cross-process recovery.** EdgeWorker restart drops the
+ *   warm-thread map; next mention is a cold start. Daytona's own
+ *   `autoStopInterval` eventually reclaims any orphaned sandboxes.
  */
 export class AgentChatSessionHandler<TEvent> {
 	private readonly adapter: ChatPlatformAdapter<TEvent>;
 	private readonly deps: AgentChatSessionHandlerDeps;
 	private readonly logger: ILogger;
 	private readonly threadSessions = new Map<string, ThreadState<TEvent>>();
-	private readonly daytonaApiKey: string;
+	private readonly provider: ProviderType;
+	private readonly daytonaApiKey: string | undefined;
+	private readonly claudeCliPath: string | undefined;
 	private readonly idleTtlMs: number;
 	private idleSweepTimer?: NodeJS.Timeout;
 	private shuttingDown = false;
@@ -137,14 +176,23 @@ export class AgentChatSessionHandler<TEvent> {
 		this.logger =
 			logger ?? createLogger({ component: "AgentChatSessionHandler" });
 
-		const apiKey = process.env.DAYTONA_API_KEY?.trim();
-		if (!apiKey) {
-			throw new Error(
-				"AgentChatSessionHandler requires DAYTONA_API_KEY in the environment. " +
-					"Set it before starting Cyrus or disable the Slack integration.",
-			);
+		this.provider = deps.provider ?? "local";
+		this.claudeCliPath = deps.claudeCliPath?.trim() || undefined;
+
+		if (this.provider === "daytona") {
+			const apiKey = process.env.DAYTONA_API_KEY?.trim();
+			if (!apiKey) {
+				throw new Error(
+					"AgentChatSessionHandler with provider='daytona' requires DAYTONA_API_KEY " +
+						"in the environment. Set it before starting Cyrus, switch to " +
+						"provider='local', or disable the chat integration.",
+				);
+			}
+			this.daytonaApiKey = apiKey;
+		} else {
+			this.daytonaApiKey = undefined;
 		}
-		this.daytonaApiKey = apiKey;
+
 		this.idleTtlMs = deps.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
 
 		// Sweep every minute; sweep work is cheap (just a map iteration + maybe
@@ -213,7 +261,12 @@ export class AgentChatSessionHandler<TEvent> {
 				return;
 			}
 
-			await configureDaytonaCompute(this.daytonaApiKey);
+			if (this.provider === "daytona") {
+				// Lazy provider init — `daytonaApiKey` is set in the
+				// constructor when the provider is "daytona", so the
+				// non-null assertion is safe here.
+				await configureDaytonaCompute(this.daytonaApiKey as string);
+			}
 
 			const taskInstructions = this.adapter.extractTaskInstructions(event);
 			const isFirstTurn = !existing;
@@ -232,49 +285,21 @@ export class AgentChatSessionHandler<TEvent> {
 				const systemPrompt = this.adapter.buildSystemPrompt(event);
 				const sessionId = `${this.adapter.platformName}-${eventId}`;
 				this.logger.info(
-					`Creating Daytona AgentSession ${sessionId} for thread ${threadKey}`,
+					`Creating ${this.provider} AgentSession ${sessionId} for thread ${threadKey}`,
 				);
-				const session = await createAgentSession(
-					{
-						sessionId,
-						harness: {
-							kind: "claude",
-							command: CLAUDE_CLI_PATH,
-						},
-						systemPrompt,
-						secrets: {
-							CLAUDE_CODE_OAUTH_TOKEN: claudeToken,
-							ANTHROPIC_AUTH_TOKEN: claudeToken,
-						},
-						packages: {
-							commands: [...DAYTONA_CLAUDE_SETUP_COMMANDS],
-						},
-						sandbox: {
-							provider: "daytona",
-							name: `cyrus-slack-${sessionId}`,
-							workingDirectory: DAYTONA_WORKING_DIR,
-							timeoutMs: 300_000,
-							// Pause the sandbox between Slack messages so we
-							// stop paying for idle compute. Daytona preserves
-							// on-disk state during stop, so the next turn's
-							// `--continue` finds the prior `.claude/` intact.
-							destroyWhileInactive: true,
-							metadata: {
-								purpose: "cyrus-slack-chat",
-								threadKey,
-							},
+				const sessionConfig = this.buildSessionConfig({
+					sessionId,
+					threadKey,
+					systemPrompt,
+					claudeToken,
+				});
+				const session = await createAgentSession(sessionConfig, {
+					callbacks: {
+						onTranscriptEvent: (te) => {
+							this.logger.debug(`[${sessionId}] transcript event: ${te.kind}`);
 						},
 					},
-					{
-						callbacks: {
-							onTranscriptEvent: (te) => {
-								this.logger.debug(
-									`[${sessionId}] transcript event: ${te.kind}`,
-								);
-							},
-						},
-					},
-				);
+				});
 				state = {
 					session,
 					lastActivityAt: Date.now(),
@@ -385,6 +410,77 @@ export class AgentChatSessionHandler<TEvent> {
 		return threadContext
 			? `${threadContext}\n\n${taskInstructions}`
 			: taskInstructions;
+	}
+
+	/**
+	 * Assemble the `CreateAgentSessionConfig` for a fresh thread session.
+	 * Provider-specific config (harness path, packages, sandbox shape)
+	 * lives here so the rest of `handleEvent` stays provider-agnostic.
+	 */
+	private buildSessionConfig(args: {
+		sessionId: string;
+		threadKey: string;
+		systemPrompt: string;
+		claudeToken: string;
+	}): CreateAgentSessionConfig {
+		const { sessionId, threadKey, systemPrompt, claudeToken } = args;
+		const secrets = {
+			CLAUDE_CODE_OAUTH_TOKEN: claudeToken,
+			ANTHROPIC_AUTH_TOKEN: claudeToken,
+		};
+
+		if (this.provider === "daytona") {
+			return {
+				sessionId,
+				harness: {
+					kind: "claude",
+					command: CLAUDE_CLI_PATH,
+				},
+				systemPrompt,
+				secrets,
+				packages: {
+					commands: [...DAYTONA_CLAUDE_SETUP_COMMANDS],
+				},
+				sandbox: {
+					provider: "daytona",
+					name: `cyrus-${this.adapter.platformName}-${sessionId}`,
+					workingDirectory: DAYTONA_WORKING_DIR,
+					timeoutMs: 300_000,
+					// Pause the sandbox between turns so we stop paying for
+					// idle compute. Daytona preserves on-disk state during
+					// stop, so the next turn's `--continue` finds the prior
+					// `.claude/` intact.
+					destroyWhileInactive: true,
+					metadata: {
+						purpose: `cyrus-${this.adapter.platformName}-chat`,
+						threadKey,
+					},
+				},
+			};
+		}
+
+		// Local provider: harness runs on the host. `claude` must be on
+		// PATH or `claudeCliPath` must be set. The runtime gives each
+		// session its own HOME under `~/.cyrus-agent-sessions/<id>/` so
+		// per-thread `.claude/` state persists across `--continue` turns
+		// without colliding with the operator's real `~/.claude/`.
+		const harnessConfig: CreateAgentSessionConfig["harness"] = {
+			kind: "claude",
+			...(this.claudeCliPath ? { command: this.claudeCliPath } : {}),
+		};
+		return {
+			sessionId,
+			harness: harnessConfig,
+			systemPrompt,
+			secrets,
+			sandbox: {
+				provider: "local",
+			},
+			metadata: {
+				purpose: `cyrus-${this.adapter.platformName}-chat`,
+				threadKey,
+			},
+		};
 	}
 
 	private async destroyThread(threadKey: string): Promise<void> {
