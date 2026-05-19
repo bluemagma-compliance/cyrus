@@ -90,7 +90,7 @@ describe("harness adapters", () => {
 		]);
 	});
 
-	it("builds a Cursor command matching headless print mode", () => {
+	it("builds a Cursor command that spawns the vendored SDK driver", () => {
 		const command = buildHarnessInvocation(
 			{
 				...baseConfig,
@@ -101,17 +101,21 @@ describe("harness adapters", () => {
 			{ userPrompt: "Patch the bug" },
 		);
 
-		expect(command.command).toBe("cursor-agent");
-		expect(command.args).toEqual([
-			"--print",
-			"--output-format",
-			"stream-json",
-			"--trust",
+		// We now spawn `node <driver>` instead of `cursor-agent` so the
+		// stdout stream is `@cursor/sdk`'s `SDKMessage` directly. The
+		// driver path is resolved at module-load time via `import.meta.url`;
+		// it's stable across builds but absolute, so we assert the suffix
+		// rather than pin the whole path.
+		expect(command.command).toBe("node");
+		const driverPath = command.args[0]!;
+		expect(driverPath).toMatch(/cursor-driver\.js$/);
+		expect(command.args.slice(1)).toEqual([
+			"--prompt",
+			"Patch the bug",
 			"--model",
 			"composer-2",
-			"--mode",
-			"ask",
-			"Patch the bug",
+			"--cwd",
+			"/tmp/worktree",
 		]);
 	});
 

@@ -1,15 +1,21 @@
 export type HarnessKind = "claude" | "codex" | "cursor" | "gemini" | "opencode";
 
-// Type-only imports — these are devDependencies and never reach the bundle.
-// Each one is the upstream SDK's canonical event/message union, empirically
-// verified to match the harness CLI's stream-json output (see PR notes).
+// Type-only imports — for Claude / Codex / Gemini / OpenCode these are
+// devDependencies and never reach the bundle. `@cursor/sdk` is a real
+// runtime dep because our vendored cursor driver (cursor-driver.ts)
+// imports it as a value; the *type* used here lives in the same package
+// as the value imports there, so we have a single source of truth and
+// the wire format is the SDK union by construction.
 //
-// `cursor` stays as `unknown` for now; `@cursor/sdk`'s `SDKMessage` describes
-// a different surface than what `cursor-agent --output-format stream-json`
-// emits. The follow-up plan is to vendor a small driver script that wraps
-// `@cursor/sdk` directly, at which point cursor's row here becomes
-// `import("@cursor/sdk").SDKMessage`.
+// Each row is empirically verified to match what reaches the runtime as
+// a JSONL line on the corresponding harness's stdout:
+// - claude / codex / gemini: the harness CLI emits these directly
+// - opencode: CLI envelope wraps SDK `Part`; envelope declared locally
+//   (OpenCodeStreamEvent below)
+// - cursor: our vendored driver emits SDKMessage directly — no drift
+//   possible because we own the producer
 import type { SDKMessage as ClaudeSDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage as CursorSDKMessage } from "@cursor/sdk";
 import type { JsonStreamEvent as GeminiJsonStreamEvent } from "@google/gemini-cli-core";
 import type { ThreadEvent as CodexThreadEvent } from "@openai/codex-sdk";
 import type { Part as OpenCodePart } from "@opencode-ai/sdk";
@@ -42,7 +48,7 @@ export interface OpenCodeStreamEvent {
 export type HarnessRawByKind = {
 	claude: ClaudeSDKMessage;
 	codex: CodexThreadEvent;
-	cursor: unknown;
+	cursor: CursorSDKMessage;
 	gemini: GeminiJsonStreamEvent;
 	opencode: OpenCodeStreamEvent;
 };

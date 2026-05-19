@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"@computesdk/daytona": "^1.7.26",
+		"@cursor/sdk": "1.0.13",
 		"computesdk": "^4.0.0",
 		"zod": "^4.3.6"
 	},

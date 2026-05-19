@@ -122,7 +122,12 @@ function tryNativeDaytonaSandbox(
 	return undefined;
 }
 
-export class RuntimeAgentSession extends EventEmitter implements AgentSession {
+// Does NOT formally `implements AgentSession<H>` — the public interface is
+// generic over the harness kind, but internally we work with the loose
+// `TranscriptEvent<unknown>` form. The factory in `runtime.ts` casts at the
+// boundary (`as unknown as AgentSession<H>`), which is the type-safe place
+// to thread the generic through.
+export class RuntimeAgentSession extends EventEmitter {
 	readonly sessionId: string;
 	readonly harness: NormalizedAgentSessionConfig["harness"]["kind"];
 	readonly events: AsyncIterable<TranscriptEvent>;
@@ -386,7 +391,9 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 			runStopped = abortCtrl.signal.aborted;
 			this.turnCount += 1;
 
-			const turnEvents = this.observedEvents.slice(eventStartIndex);
+			const turnEvents = this.observedEvents.slice(
+				eventStartIndex,
+			) as AgentSessionResult["events"];
 			return {
 				sessionId: this.sessionId,
 				harness: this.harness,
@@ -403,7 +410,9 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 				durationMs: Date.now() - startedAt,
 			});
 			await this.emitEvent(failedEvent);
-			const turnEvents = this.observedEvents.slice(eventStartIndex);
+			const turnEvents = this.observedEvents.slice(
+				eventStartIndex,
+			) as AgentSessionResult["events"];
 			return {
 				sessionId: this.sessionId,
 				harness: this.harness,
@@ -542,7 +551,18 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 		this.observedEvents.push(event);
 		this.eventBuffer.push(event);
 		this.emit("transcript", event);
-		await this.callbacks.onTranscriptEvent?.(event);
+		// `callbacks` is typed for the public boundary — its callback
+		// expects `TranscriptEvent<HarnessRawByKind[H]>` where H is
+		// chosen by the caller of `createAgentSession`. Internally we
+		// hold events as `TranscriptEvent<unknown>` because the runtime
+		// is harness-agnostic. The cast at this single boundary is the
+		// type-safe equivalent of the cast already happening at the
+		// `createAgentSession` factory.
+		await (
+			this.callbacks.onTranscriptEvent as
+				| ((e: TranscriptEvent) => Promise<void> | void)
+				| undefined
+		)?.(event);
 	}
 
 	/**

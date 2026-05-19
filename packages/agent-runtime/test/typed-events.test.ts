@@ -4,6 +4,7 @@
  * fails `tsc`. The runtime `expect`s are belt-and-suspenders.
  */
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage as CursorSDKMessage } from "@cursor/sdk";
 import type { JsonStreamEvent } from "@google/gemini-cli-core";
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { describe, expect, it } from "vitest";
@@ -33,8 +34,8 @@ describe("typed events — compile-time narrowing", () => {
 		type _OpenCode = ExpectTrue<
 			Equals<HarnessRawByKind["opencode"], OpenCodeStreamEvent>
 		>;
-		type _CursorUnknown = ExpectTrue<
-			Equals<HarnessRawByKind["cursor"], unknown>
+		type _Cursor = ExpectTrue<
+			Equals<HarnessRawByKind["cursor"], CursorSDKMessage>
 		>;
 
 		// Use a fake to anchor the test in the runtime too.
