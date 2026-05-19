@@ -20,12 +20,29 @@ export interface RuntimeSecret {
 }
 
 export interface McpServerRuntimeConfig {
+	/**
+	 * Optional MCP transport tag. Materialized verbatim into `.mcp.json`
+	 * so it reaches the harness CLI (Claude Code uses this to pick
+	 * between HTTP/SSE/stdio transports).
+	 */
+	type?: "http" | "sse" | "stdio";
 	command?: string;
 	args?: string[];
 	env?: Record<string, string>;
 	url?: string;
+	/**
+	 * Legacy alias for `url` retained for older callers. Prefer `url`
+	 * with an appropriate `type` for new code.
+	 */
 	httpUrl?: string;
 	headers?: Record<string, string>;
+	/**
+	 * Catch-all for additional SDK-defined fields (`tools`, `alwaysLoad`,
+	 * etc.). The runtime forwards every key under each server entry to
+	 * the materializer unchanged — these fields are interpreted by the
+	 * harness, not by us — so the schema is intentionally permissive.
+	 */
+	[extraField: string]: unknown;
 }
 
 /**

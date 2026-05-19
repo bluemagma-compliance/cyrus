@@ -1,9 +1,11 @@
 import type {
 	AgentSession,
 	CreateAgentSessionConfig,
+	McpServerRuntimeConfig,
 	TranscriptEvent,
 } from "cyrus-agent-runtime";
 import { createAgentSession } from "cyrus-agent-runtime";
+import type { McpServerConfig } from "cyrus-claude-runner";
 import type { ILogger, ProviderType } from "cyrus-core";
 import { createLogger } from "cyrus-core";
 
@@ -29,7 +31,7 @@ export interface ChatPlatformAdapter<TEvent> {
 	notifyBusy(event: TEvent, threadKey: string): Promise<void>;
 }
 
-export interface AgentChatSessionHandlerDeps {
+export interface AgentChatSessionHandlerDeps<TEvent = unknown> {
 	onWebhookStart: () => void;
 	onWebhookEnd: () => void;
 	onError: (error: Error) => void;
@@ -60,6 +62,26 @@ export interface AgentChatSessionHandlerDeps {
 	 * path.
 	 */
 	claudeCliPath?: string;
+	/**
+	 * Build the MCP servers to attach to a thread's session, called once
+	 * per thread on first creation. Return `undefined` or an empty
+	 * record to run with no MCP servers. The returned config is wrapped
+	 * into a `RuntimePlugin` named `"chat"` and passed to the runtime
+	 * via `plugins[]`, which the materializer fans out into the
+	 * harness's native MCP wiring (Claude reads `.mcp.json`; other
+	 * harnesses get their equivalent).
+	 *
+	 * Per-server transports supported: `type: "http"` and `type: "sse"`
+	 * (forwarded verbatim with `url` + `headers`) and stdio (`command` +
+	 * `args` + `env`, with `type` omitted or set to `"stdio"`). SDK-only
+	 * `type: "sdk"` configs require an in-process server instance and
+	 * are NOT supported across the runtime's subprocess boundary —
+	 * those callers should expose the same server as an HTTP endpoint
+	 * instead (which `McpConfigService` already does for cyrus-tools).
+	 */
+	buildMcpServers?: (
+		event: TEvent,
+	) => Promise<Record<string, McpServerConfig> | undefined>;
 }
 
 const DEFAULT_IDLE_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -104,6 +126,39 @@ function readClaudeCredential(): ClaudeCredential | undefined {
 	const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
 	if (apiKey) return { kind: "apiKey", token: apiKey };
 	return undefined;
+}
+
+/**
+ * Translate the Claude SDK's `McpServerConfig` union into the runtime's
+ * permissive `McpServerRuntimeConfig` shape.
+ *
+ * The runtime forwards entries verbatim to the materializer, which
+ * writes them straight into `.mcp.json` (Claude) or the equivalent
+ * harness-native config file. That means the SDK fields (`type`,
+ * `url`, `headers`, `command`, `args`, `env`, `alwaysLoad`, `tools`,
+ * ...) are exactly what the harness needs at runtime — we just need a
+ * type-safe bridge to drop them into a record the runtime accepts.
+ *
+ * SDK-instance servers (`type: "sdk"`, which carry a live `McpServer`
+ * object) are NOT representable across the runtime's subprocess
+ * boundary and are silently dropped here. Callers that want those
+ * tools available to a subprocess harness should expose the same
+ * server over HTTP/SSE instead (which `McpConfigService` already does
+ * for `cyrus-tools`).
+ */
+function toRuntimeMcpServers(
+	servers: Record<string, McpServerConfig>,
+): Record<string, McpServerRuntimeConfig> {
+	const out: Record<string, McpServerRuntimeConfig> = {};
+	for (const [name, entry] of Object.entries(servers)) {
+		// `type: "sdk"` entries can't be carried across IPC; skip.
+		if ((entry as { type?: string }).type === "sdk") continue;
+		// Spread the SDK entry directly. `McpServerRuntimeConfig` has a
+		// `[k: string]: unknown` index signature so unknown SDK keys
+		// (e.g. `alwaysLoad`, `tools`) flow through unchanged.
+		out[name] = { ...(entry as Record<string, unknown>) };
+	}
+	return out;
 }
 
 // Guard against multiple compute.setConfig() calls — ComputeSDK uses a
@@ -167,6 +222,18 @@ interface ThreadState<TEvent> {
  *   we never set both. `CLAUDE_CODE_OAUTH_TOKEN` wins if both are
  *   present.
  *
+ * **MCP servers**
+ *
+ * Wired via `deps.buildMcpServers(event)`, invoked once per thread on
+ * first session creation. The handler wraps the returned config into a
+ * single anonymous `RuntimePlugin` (`name: "chat"`) which the runtime
+ * materializer fans out into the harness's native MCP surface (for
+ * Claude that's `<plugin-root>/.mcp.json`). HTTP, SSE, and stdio
+ * transports are supported; in-process SDK-instance configs are
+ * dropped (they can't cross the subprocess boundary — expose them
+ * over HTTP/SSE instead, which `McpConfigService` already does for
+ * `cyrus-tools`).
+ *
  * **Known limitations**
  *
  * - **No mid-flight stream injection.** A second message while the
@@ -174,10 +241,6 @@ interface ThreadState<TEvent> {
  *   `notifyBusy()` rather than injecting into stdin. Future work:
  *   route through `AgentSession.addMessage()` with
  *   `interactiveInput: true`.
- * - **No MCP servers.** `cyrus-agent-runtime` doesn't yet thread them
- *   through to the harness CLI; the cyrus-tools in-process SDK
- *   server wouldn't translate across the subprocess boundary anyway.
- *   Chat sessions run with the Claude CLI default toolset only.
  * - **Claude harness only.** No runner-selection layer for chat yet.
  * - **No cross-process recovery.** EdgeWorker restart drops the
  *   warm-thread map; next mention is a cold start. Daytona's own
@@ -185,7 +248,7 @@ interface ThreadState<TEvent> {
  */
 export class AgentChatSessionHandler<TEvent> {
 	private readonly adapter: ChatPlatformAdapter<TEvent>;
-	private readonly deps: AgentChatSessionHandlerDeps;
+	private readonly deps: AgentChatSessionHandlerDeps<TEvent>;
 	private readonly logger: ILogger;
 	private readonly threadSessions = new Map<string, ThreadState<TEvent>>();
 	private readonly provider: ProviderType;
@@ -197,7 +260,7 @@ export class AgentChatSessionHandler<TEvent> {
 
 	constructor(
 		adapter: ChatPlatformAdapter<TEvent>,
-		deps: AgentChatSessionHandlerDeps,
+		deps: AgentChatSessionHandlerDeps<TEvent>,
 		logger?: ILogger,
 	) {
 		this.adapter = adapter;
@@ -316,11 +379,22 @@ export class AgentChatSessionHandler<TEvent> {
 				this.logger.info(
 					`Creating ${this.provider} AgentSession ${sessionId} for thread ${threadKey}`,
 				);
+				const mcpServers = this.deps.buildMcpServers
+					? await this.deps.buildMcpServers(event).catch((err: unknown) => {
+							this.logger.warn(
+								`buildMcpServers threw for ${threadKey}; running session with no MCP servers: ${
+									err instanceof Error ? err.message : err
+								}`,
+							);
+							return undefined;
+						})
+					: undefined;
 				const sessionConfig = this.buildSessionConfig({
 					sessionId,
 					threadKey,
 					systemPrompt,
 					credential,
+					mcpServers,
 				});
 				const session = await createAgentSession(sessionConfig, {
 					callbacks: {
@@ -451,8 +525,9 @@ export class AgentChatSessionHandler<TEvent> {
 		threadKey: string;
 		systemPrompt: string;
 		credential: ClaudeCredential;
+		mcpServers?: Record<string, McpServerConfig>;
 	}): CreateAgentSessionConfig {
-		const { sessionId, threadKey, systemPrompt, credential } = args;
+		const { sessionId, threadKey, systemPrompt, credential, mcpServers } = args;
 		// Forward exactly the env var the operator actually set. Setting
 		// both would be a bug: Claude Code treats `CLAUDE_CODE_OAUTH_TOKEN`
 		// (Claude Code subscription OAuth flow) and `ANTHROPIC_API_KEY`
@@ -462,6 +537,14 @@ export class AgentChatSessionHandler<TEvent> {
 			credential.kind === "oauth"
 				? { CLAUDE_CODE_OAUTH_TOKEN: credential.token }
 				: { ANTHROPIC_API_KEY: credential.token };
+		// Wrap the chat-session MCP servers into a single anonymous
+		// RuntimePlugin so the runtime materializer fans them out into
+		// the harness's native MCP config surface. Omitted entirely when
+		// the caller returned undefined / no entries.
+		const plugins =
+			mcpServers && Object.keys(mcpServers).length > 0
+				? [{ name: "chat", mcpServers: toRuntimeMcpServers(mcpServers) }]
+				: undefined;
 
 		if (this.provider === "daytona") {
 			return {
@@ -475,6 +558,7 @@ export class AgentChatSessionHandler<TEvent> {
 				packages: {
 					commands: [...DAYTONA_CLAUDE_SETUP_COMMANDS],
 				},
+				...(plugins ? { plugins } : {}),
 				sandbox: {
 					provider: "daytona",
 					name: `cyrus-${this.adapter.platformName}-${sessionId}`,
@@ -507,6 +591,7 @@ export class AgentChatSessionHandler<TEvent> {
 			harness: harnessConfig,
 			systemPrompt,
 			secrets,
+			...(plugins ? { plugins } : {}),
 			sandbox: {
 				provider: "local",
 			},

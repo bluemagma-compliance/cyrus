@@ -128,14 +128,23 @@ export const CreateAgentSessionConfigSchema = z.object({
 					mcpServers: z
 						.record(
 							z.string(),
-							z.object({
-								command: z.string().optional(),
-								args: z.array(z.string()).optional(),
-								env: z.record(z.string(), z.string()).optional(),
-								url: z.string().optional(),
-								httpUrl: z.string().optional(),
-								headers: z.record(z.string(), z.string()).optional(),
-							}),
+							// MCP server entries are forwarded verbatim to the
+							// materializer / harness CLI, which interprets the
+							// full SDK schema (`type`, `tools`, `alwaysLoad`,
+							// etc.). `.passthrough()` keeps the documented
+							// fields typed while letting unknown SDK fields
+							// flow through without being silently stripped.
+							z
+								.object({
+									type: z.enum(["http", "sse", "stdio"]).optional(),
+									command: z.string().optional(),
+									args: z.array(z.string()).optional(),
+									env: z.record(z.string(), z.string()).optional(),
+									url: z.string().optional(),
+									httpUrl: z.string().optional(),
+									headers: z.record(z.string(), z.string()).optional(),
+								})
+								.passthrough(),
 						)
 						.optional(),
 					hooks: z

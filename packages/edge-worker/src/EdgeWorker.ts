@@ -1026,6 +1026,7 @@ export class EdgeWorker extends EventEmitter {
 				},
 				onError: (error) => this.handleClaudeError(error),
 				provider: this.config.defaultProvider,
+				buildMcpServers: (event) => this.buildChatMcpServers(event),
 			},
 			this.logger,
 		);
@@ -2349,6 +2350,43 @@ ${taskSection}`;
 		}
 
 		return "idle";
+	}
+
+	/**
+	 * Build the MCP servers attached to a Slack chat session.
+	 *
+	 * Chat sessions aren't tied to a specific repository, but they still
+	 * benefit from the workspace-level MCP servers — Linear, cyrus-tools,
+	 * cyrus-docs, and (optionally) Slack. We delegate to
+	 * `McpConfigService.buildMcpConfig` with a synthetic repo ID and
+	 * the first configured Linear workspace, since that's the same set
+	 * of servers a repo-bound session would see. Returns undefined when
+	 * no Linear workspace is configured, in which case the chat session
+	 * runs with no MCP servers (the Claude CLI default toolset only).
+	 *
+	 * Re-invoked on each new thread; idempotent for the same context.
+	 */
+	private async buildChatMcpServers(
+		event: SlackWebhookEvent,
+	): Promise<Record<string, McpServerConfig> | undefined> {
+		const workspaces = this.config.linearWorkspaces ?? {};
+		const linearWorkspaceId = Object.keys(workspaces)[0];
+		if (!linearWorkspaceId) {
+			this.logger.debug(
+				"buildChatMcpServers: no Linear workspace configured; session will run with no MCP servers",
+			);
+			return undefined;
+		}
+		// Tag the context with the Slack thread so cyrus-tools can scope
+		// requests for this chat. The repoId here is synthetic — chat
+		// sessions don't have a real repo, but McpConfigService uses
+		// `<repoId>:<parentSessionId>` only as a cache key.
+		const threadKey = `${event.payload.channel}:${event.payload.thread_ts || event.payload.ts}`;
+		return this.mcpConfigService.buildMcpConfig(
+			`chat-${event.teamId}`,
+			linearWorkspaceId,
+			`chat-${threadKey}`,
+		);
 	}
 
 	/**
