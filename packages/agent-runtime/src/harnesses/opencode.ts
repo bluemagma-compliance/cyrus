@@ -12,7 +12,10 @@ export const opencodeHarness: HarnessAdapter = {
 		config: NormalizedAgentSessionConfig,
 		options: HarnessRunOptions,
 	) {
-		const args = ["run", "--output-format", "json"];
+		// `--format json` (not `--output-format json`) — the CLI's actual flag
+		// per `opencode run --help` on v1.15.5. Mis-named in earlier versions
+		// of this adapter; would have failed at runtime on first invocation.
+		const args = ["run", "--format", "json"];
 		const model = resolveModel(config);
 
 		if (model) {

@@ -6,6 +6,7 @@ import { RuntimeAgentSession } from "./session.js";
 import type {
 	AgentSession,
 	CreateAgentSessionConfig,
+	HarnessKind,
 	NormalizedAgentSessionConfig,
 	RuntimeCallbacks,
 	RuntimeHarnessConfig,
@@ -13,41 +14,62 @@ import type {
 	SandboxProvider,
 } from "./types.js";
 
-export interface CreateAgentRuntimeOptions {
-	callbacks?: RuntimeCallbacks;
+export interface CreateAgentRuntimeOptions<
+	H extends HarnessKind = HarnessKind,
+> {
+	callbacks?: RuntimeCallbacks<H>;
 	sandboxProviders?: Record<string, SandboxProvider>;
 }
 
-export class AgentRuntime {
-	constructor(private readonly options: CreateAgentRuntimeOptions = {}) {}
+/**
+ * Variant of `CreateAgentSessionConfig` whose `harness` field is
+ * narrowed to a single `HarnessKind`, so `createAgentSession` can
+ * infer `H` from the config the caller wrote.
+ */
+export type CreateAgentSessionConfigFor<H extends HarnessKind> = Omit<
+	CreateAgentSessionConfig,
+	"harness"
+> & {
+	harness: H | (RuntimeHarnessConfig & { kind: H });
+};
 
-	async createSession(config: CreateAgentSessionConfig): Promise<AgentSession> {
+export class AgentRuntime<H extends HarnessKind = HarnessKind> {
+	constructor(private readonly options: CreateAgentRuntimeOptions<H> = {}) {}
+
+	async createSession(
+		config: CreateAgentSessionConfigFor<H>,
+	): Promise<AgentSession<H>> {
 		const normalized = normalizeConfig(config);
 		const adapter = getHarnessAdapter(normalized.harness.kind);
 		const provider =
 			this.options.sandboxProviders?.[normalized.sandbox.provider] ??
 			createSandboxProvider(normalized.sandbox.provider);
 		const sandbox = await provider.create(normalized.sandbox);
+		// Internal RuntimeAgentSession is non-generic (it operates on the
+		// loose union); narrow the public return via cast at this boundary
+		// so callers get the typed handle without the implementation
+		// having to thread the generic everywhere.
 		return new RuntimeAgentSession(
 			normalized,
 			adapter,
 			sandbox,
-			this.options.callbacks,
-		);
+			this.options
+				.callbacks as RuntimeCallbacks /* widen to default for impl */,
+		) as unknown as AgentSession<H>;
 	}
 }
 
-export function createAgentRuntime(
-	options?: CreateAgentRuntimeOptions,
-): AgentRuntime {
+export function createAgentRuntime<H extends HarnessKind = HarnessKind>(
+	options?: CreateAgentRuntimeOptions<H>,
+): AgentRuntime<H> {
 	return new AgentRuntime(options);
 }
 
-export async function createAgentSession(
-	config: CreateAgentSessionConfig,
-	options?: CreateAgentRuntimeOptions,
-): Promise<AgentSession> {
-	return createAgentRuntime(options).createSession(config);
+export async function createAgentSession<H extends HarnessKind = HarnessKind>(
+	config: CreateAgentSessionConfigFor<H>,
+	options?: CreateAgentRuntimeOptions<H>,
+): Promise<AgentSession<H>> {
+	return createAgentRuntime<H>(options).createSession(config);
 }
 
 export function normalizeConfig(
