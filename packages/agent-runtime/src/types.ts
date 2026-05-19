@@ -28,6 +28,72 @@ export interface McpServerRuntimeConfig {
 	headers?: Record<string, string>;
 }
 
+/**
+ * Hook event names — a deliberate universal subset that maps cleanly to
+ * Claude (`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`,
+ * `UserPromptSubmit`) and Cursor (`preToolUse`, etc.). Events that exist
+ * on one harness but not the others are silently dropped by the
+ * materializer for harnesses that can't translate them.
+ *
+ * Codex hooks are deferred for v1 — its hook schema is version-pinned
+ * and unstable.
+ */
+export type PluginHookEvent =
+	| "PreToolUse"
+	| "PostToolUse"
+	| "SessionStart"
+	| "Stop"
+	| "UserPromptSubmit";
+
+export interface PluginHook {
+	event: PluginHookEvent;
+	/** Shell command to run when the event fires. */
+	command: string;
+	/** Optional regex matcher over the tool name (PreToolUse/PostToolUse). */
+	matcher?: string;
+	/** Optional per-hook timeout in seconds. Honored by Claude. */
+	timeout?: number;
+	/** Fail-closed semantics for Cursor (true => deny on hook crash). Ignored by Claude. */
+	failClosed?: boolean;
+}
+
+export interface PluginSkill {
+	/** Skill name, used as the directory name and slash-command suffix. */
+	name: string;
+	/** SKILL.md frontmatter `description` — drives auto-invocation. Required. */
+	description: string;
+	/** SKILL.md markdown body (without frontmatter). */
+	content: string;
+	/** If true, the skill is slash-command-only (no model auto-invoke). */
+	disableModelInvocation?: boolean;
+	/**
+	 * Sibling files placed under the skill's directory at
+	 * `<skill-root>/<path>`. Used for `scripts/`, `references/`, etc.
+	 */
+	assets?: Array<{ path: string; content: string }>;
+}
+
+/**
+ * Provider-agnostic plugin shape — bundles MCP servers, hooks, and
+ * skills. The runtime translates this into harness-native filesystem
+ * state or CLI flags per the target harness.
+ *
+ * Callers can either supply a fully-resolved `RuntimePlugin` inline, or
+ * point at a directory via `{ rootPath }` (resolver reads
+ * `<rootPath>/cyrus-plugin.json` and slurps referenced files). v1
+ * implements inline only; rootPath is a follow-up.
+ */
+export interface RuntimePlugin {
+	name: string;
+	version?: string;
+	description?: string;
+	mcpServers?: Record<string, McpServerRuntimeConfig>;
+	hooks?: PluginHook[];
+	skills?: PluginSkill[];
+}
+
+export type PluginInput = RuntimePlugin | { rootPath: string };
+
 export interface RuntimeMemoryConfig {
 	enabled?: boolean;
 	directory?: string;
@@ -182,6 +248,13 @@ export interface CreateAgentSessionConfig {
 	folders?: RuntimeFolderConfig[];
 	repositories?: RuntimeRepositoryConfig[];
 	mcps?: Record<string, McpServerRuntimeConfig>;
+	/**
+	 * Bundles of MCP servers + hooks + skills materialized into the
+	 * sandbox in a harness-native form. Replaces the standalone `mcps`
+	 * field for new code; `mcps` is kept for back-compat but is currently
+	 * not wired through the runtime.
+	 */
+	plugins?: PluginInput[];
 	permissions?: RuntimePermissionConfig;
 	memory?: RuntimeMemoryConfig;
 	sandbox?: RuntimeSandboxConfig;
@@ -236,6 +309,24 @@ export interface HarnessRunOptions {
 	 * (e.g. Claude `--continue`). `false` on the first run.
 	 */
 	continueSession: boolean;
+	/**
+	 * Outputs from per-harness plugin materializers, surfaced so the
+	 * adapter's `buildCommand` can wire them into the CLI invocation.
+	 * The session populates this on first turn after running the right
+	 * materializer for the harness.
+	 */
+	pluginOutputs?: {
+		/** Claude: directories to pass as `--plugin-dir <dir>` (one per plugin). */
+		claudePluginDirs?: string[];
+		/** Claude: optional combined mcp config path for `--mcp-config` + `--strict-mcp-config`. */
+		claudeMcpConfigPath?: string;
+		/** Cursor: true when any plugin declared MCP servers — caller appends `--approve-mcps`. */
+		cursorHasMcpServers?: boolean;
+		/** Codex: inline `-c` CLI overrides (e.g. `mcp_servers.<n>={...}`). */
+		codexConfigOverrides?: string[];
+		/** Codex: HOME override required for skills discovery (`$HOME/.agents/skills/`). */
+		codexHomeOverride?: string;
+	};
 }
 
 export interface HarnessAdapter {

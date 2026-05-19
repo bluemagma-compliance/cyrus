@@ -35,6 +35,12 @@ export const cursorHarness: HarnessAdapter = {
 			args.push("--force");
 		}
 
+		// Plugin wiring — when any plugin declared MCP servers, headless
+		// cursor-agent silently drops them unless we auto-approve.
+		if (options.pluginOutputs?.cursorHasMcpServers) {
+			args.push("--approve-mcps");
+		}
+
 		args.push(options.userPrompt);
 
 		return createCommand(config, "cursor-agent", args);

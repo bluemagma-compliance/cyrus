@@ -7,6 +7,12 @@ import {
 	materializeRepositoryIntoSandbox,
 	syncFolderBackToHost,
 } from "./materializers/index.js";
+import {
+	materializePluginForClaude,
+	materializePluginForCodex,
+	materializePluginForCursor,
+	resolvePlugin,
+} from "./plugins/index.js";
 // (Daytona stop/start support — see pauseSandboxIfApplicable.)
 import type {
 	AgentSession,
@@ -139,6 +145,22 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 	private turnCount = 0;
 	private sandboxDestroyed = false;
 	private sandboxDestroyPromise?: Promise<void>;
+	/**
+	 * Outputs from plugin materialization on the first turn, persisted
+	 * for re-use on subsequent turns (the adapter's `buildCommand` needs
+	 * them every turn to wire CLI flags consistently).
+	 */
+	private pluginOutputs: {
+		claudePluginDirs: string[];
+		claudeMcpConfigPath?: string;
+		cursorHasMcpServers: boolean;
+		codexConfigOverrides: string[];
+		codexHomeOverride?: string;
+	} = {
+		claudePluginDirs: [],
+		cursorHasMcpServers: false,
+		codexConfigOverrides: [],
+	};
 
 	private readonly sandbox: RunnerSandbox;
 	/**
@@ -263,6 +285,7 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 				await this.materializeFiles();
 				await this.materializeFolders();
 				await this.materializeRepositories();
+				await this.materializePlugins();
 				await this.runSetupCommands();
 				this.materializationDone = true;
 			}
@@ -270,20 +293,32 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 			const command = this.adapter.buildCommand(this.config, {
 				userPrompt,
 				continueSession,
+				pluginOutputs: {
+					claudePluginDirs: this.pluginOutputs.claudePluginDirs,
+					claudeMcpConfigPath: this.pluginOutputs.claudeMcpConfigPath,
+					cursorHasMcpServers: this.pluginOutputs.cursorHasMcpServers,
+					codexConfigOverrides: this.pluginOutputs.codexConfigOverrides,
+					codexHomeOverride: this.pluginOutputs.codexHomeOverride,
+				},
 			});
 			const fullCommand = [
 				command.command,
 				...command.args.map(shellQuote),
 			].join(" ");
-			// HOME isn't overridden by the runtime:
-			// - Local provider uses the host's real HOME so the user's
-			//   already-logged-in `~/.claude/` is visible.
-			// - Daytona sandbox uses its natural HOME (e.g. /home/daytona).
-			//   In destroyWhileInactive mode the sandbox is paused (not
-			//   destroyed) between runs — its on-disk state is preserved
-			//   by Daytona during stop, so `.claude/projects/...` survives
-			//   and Claude `--continue` picks up the prior session.
+			// HOME defaults to the sandbox's natural HOME (host's real one
+			// for local; /home/daytona inside Daytona), so Claude's
+			// `~/.claude/` is naturally visible / survives stop/start.
+			// Codex is the exception: skill discovery is rooted at
+			// `$HOME/.agents/skills/` (verified empirically), so when the
+			// codex materializer wrote skills to a per-session HOME root,
+			// we need to override HOME in the harness env for codex to
+			// see them.
+			const codexHomeOverride: Record<string, string> =
+				this.harness === "codex" && this.pluginOutputs.codexHomeOverride
+					? { HOME: this.pluginOutputs.codexHomeOverride }
+					: {};
 			const env: Record<string, string> = {
+				...codexHomeOverride,
 				...this.config.env,
 				...(command.env ?? {}),
 				...this.materializeSecrets(),
@@ -614,6 +649,105 @@ export class RuntimeAgentSession extends EventEmitter implements AgentSession {
 						mountPath: repo.mountPath,
 						branch: repo.branch,
 						access,
+						error: err.message,
+					}),
+				);
+				throw err;
+			}
+		}
+	}
+
+	private async materializePlugins(): Promise<void> {
+		const plugins = this.config.plugins ?? [];
+		if (plugins.length === 0) return;
+
+		// Per-harness root paths inside the sandbox.
+		const workspaceRoot = this.config.sandbox.workingDirectory ?? "/";
+		const claudePluginsRoot = `${workspaceRoot.replace(/\/$/, "")}/.cyrus-plugins`;
+		// Codex skills live at $HOME/.agents/skills/. For local provider use
+		// a per-session tmp HOME so we don't trample the user's real one;
+		// for remote sandboxes use the sandbox's natural home (/home/daytona)
+		// which is isolated by being a fresh container.
+		const codexHomeRoot =
+			this.config.sandbox.provider === "local"
+				? this.sessionStateDir
+				: workspaceRoot;
+
+		for (const input of plugins) {
+			const plugin = await resolvePlugin(input);
+			await this.emitEvent(
+				this.createEvent("plugin.materialize.started", {
+					name: plugin.name,
+					harness: this.harness,
+				}),
+			);
+			try {
+				if (this.harness === "claude") {
+					const out = await materializePluginForClaude(
+						plugin,
+						this.sandbox,
+						claudePluginsRoot,
+					);
+					this.pluginOutputs.claudePluginDirs.push(out.pluginDir);
+					if (out.mcpConfigPath) {
+						this.pluginOutputs.claudeMcpConfigPath = out.mcpConfigPath;
+					}
+					await this.emitEvent(
+						this.createEvent("plugin.materialize.completed", {
+							name: plugin.name,
+							harness: "claude",
+							pluginDir: out.pluginDir,
+							filesWritten: out.filesWritten.length,
+						}),
+					);
+				} else if (this.harness === "cursor") {
+					const out = await materializePluginForCursor(
+						plugin,
+						this.sandbox,
+						workspaceRoot,
+					);
+					this.pluginOutputs.cursorHasMcpServers =
+						this.pluginOutputs.cursorHasMcpServers || out.hasMcpServers;
+					await this.emitEvent(
+						this.createEvent("plugin.materialize.completed", {
+							name: plugin.name,
+							harness: "cursor",
+							filesWritten: out.filesWritten.length,
+						}),
+					);
+				} else if (this.harness === "codex") {
+					const out = await materializePluginForCodex(
+						plugin,
+						this.sandbox,
+						codexHomeRoot,
+					);
+					this.pluginOutputs.codexConfigOverrides.push(
+						...out.cliConfigOverrides,
+					);
+					this.pluginOutputs.codexHomeOverride = out.homeOverride;
+					await this.emitEvent(
+						this.createEvent("plugin.materialize.completed", {
+							name: plugin.name,
+							harness: "codex",
+							configOverrides: out.cliConfigOverrides.length,
+							filesWritten: out.filesWritten.length,
+						}),
+					);
+				} else {
+					await this.emitEvent(
+						this.createEvent("plugin.materialize.skipped", {
+							name: plugin.name,
+							harness: this.harness,
+							reason: "no materializer for this harness",
+						}),
+					);
+				}
+			} catch (error) {
+				const err = error instanceof Error ? error : new Error(String(error));
+				await this.emitEvent(
+					this.createEvent("plugin.materialize.failed", {
+						name: plugin.name,
+						harness: this.harness,
 						error: err.message,
 					}),
 				);

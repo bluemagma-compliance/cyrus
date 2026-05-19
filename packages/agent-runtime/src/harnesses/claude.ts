@@ -51,6 +51,16 @@ export const claudeHarness: HarnessAdapter = {
 			);
 		}
 
+		// Plugin wiring — materializer output.
+		const claudePluginDirs = options.pluginOutputs?.claudePluginDirs ?? [];
+		for (const dir of claudePluginDirs) {
+			args.push("--plugin-dir", dir);
+		}
+		if (options.pluginOutputs?.claudeMcpConfigPath) {
+			args.push("--mcp-config", options.pluginOutputs.claudeMcpConfigPath);
+			args.push("--strict-mcp-config");
+		}
+
 		return createCommand(config, "claude", args);
 	},
 	parseStdoutLine(line, context) {

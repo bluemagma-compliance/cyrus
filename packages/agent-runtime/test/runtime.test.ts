@@ -499,6 +499,76 @@ describe("AgentRuntime", () => {
 		expect(sandbox.destroyed).toBe(1);
 	});
 
+	it("materializes a Claude plugin and wires --plugin-dir into the harness invocation", async () => {
+		// Verifies: session calls the right materializer, writes plugin
+		// files into the fake sandbox, and passes the resulting plugin
+		// dir as `--plugin-dir` on the harness CLI.
+		const sandbox = new FakeSandbox(
+			JSON.stringify({
+				type: "result",
+				subtype: "success",
+				result: "ok",
+			}),
+		);
+		const session = await createAgentSession(
+			{
+				sessionId: "session-plugin-claude",
+				harness: { kind: "claude" },
+				sandbox: { provider: "local", workingDirectory: "/work" },
+				plugins: [
+					{
+						name: "demo",
+						version: "0.0.1",
+						mcpServers: { foo: { command: "echo", args: ["x"] } },
+						hooks: [
+							{ event: "PreToolUse", command: "echo pre", matcher: "Bash" },
+						],
+						skills: [
+							{
+								name: "hi",
+								description: "Greet the user.",
+								content: "Say hi.",
+							},
+						],
+					},
+				],
+			},
+			{ sandboxProviders: { local: new FakeSandboxProvider(sandbox) } },
+		);
+		const result = await session.run("hello");
+		expect(result.success).toBe(true);
+
+		// Plugin files landed at the expected paths.
+		const paths = sandbox.files.map((f) => f.path).sort();
+		expect(paths).toContain(
+			"/work/.cyrus-plugins/demo/.claude-plugin/plugin.json",
+		);
+		expect(paths).toContain("/work/.cyrus-plugins/demo/.mcp.json");
+		expect(paths).toContain("/work/.cyrus-plugins/demo/hooks/hooks.json");
+		expect(paths).toContain("/work/.cyrus-plugins/demo/skills/hi/SKILL.md");
+
+		// Harness command got --plugin-dir + --mcp-config + --strict-mcp-config.
+		const harnessCmd = sandbox.commands.at(-1)!.command;
+		expect(harnessCmd).toContain("--plugin-dir /work/.cyrus-plugins/demo");
+		expect(harnessCmd).toContain(
+			"--mcp-config /work/.cyrus-plugins/demo/.mcp.json",
+		);
+		expect(harnessCmd).toContain("--strict-mcp-config");
+
+		// Plugin lifecycle events present.
+		const kinds = result.events.map((e) => e.kind);
+		expect(kinds).toContain("plugin.materialize.started");
+		expect(kinds).toContain("plugin.materialize.completed");
+
+		// SKILL.md content has the right frontmatter.
+		const skillFile = sandbox.files.find(
+			(f) => f.path === "/work/.cyrus-plugins/demo/skills/hi/SKILL.md",
+		)!;
+		expect(skillFile.content).toContain("name: hi");
+		expect(skillFile.content).toContain("description: Greet the user.");
+		expect(skillFile.content).toContain("Say hi.");
+	});
+
 	it("materializes sensitive files before setup without exposing contents", async () => {
 		const sandbox = new FakeSandbox(
 			JSON.stringify({

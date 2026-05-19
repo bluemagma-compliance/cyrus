@@ -119,6 +119,66 @@ export const CreateAgentSessionConfigSchema = z.object({
 		)
 		.optional(),
 	mcps: z.record(z.string(), z.unknown()).optional(),
+	plugins: z
+		.array(
+			z.union([
+				z.object({
+					name: z.string().min(1),
+					version: z.string().optional(),
+					description: z.string().optional(),
+					mcpServers: z
+						.record(
+							z.string(),
+							z.object({
+								command: z.string().optional(),
+								args: z.array(z.string()).optional(),
+								env: z.record(z.string(), z.string()).optional(),
+								url: z.string().optional(),
+								httpUrl: z.string().optional(),
+								headers: z.record(z.string(), z.string()).optional(),
+							}),
+						)
+						.optional(),
+					hooks: z
+						.array(
+							z.object({
+								event: z.enum([
+									"PreToolUse",
+									"PostToolUse",
+									"SessionStart",
+									"Stop",
+									"UserPromptSubmit",
+								]),
+								command: z.string().min(1),
+								matcher: z.string().optional(),
+								timeout: z.number().int().positive().optional(),
+								failClosed: z.boolean().optional(),
+							}),
+						)
+						.optional(),
+					skills: z
+						.array(
+							z.object({
+								name: z.string().min(1),
+								description: z.string().min(1),
+								content: z.string(),
+								disableModelInvocation: z.boolean().optional(),
+								assets: z
+									.array(
+										z.object({
+											path: z.string().min(1),
+											content: z.string(),
+										}),
+									)
+									.optional(),
+							}),
+						)
+						.optional(),
+				}),
+				z.object({ rootPath: z.string().min(1) }),
+			]),
+		)
+		.optional(),
 	permissions: z
 		.object({
 			mode: PermissionModeSchema.optional(),

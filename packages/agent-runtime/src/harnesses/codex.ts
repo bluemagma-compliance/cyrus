@@ -33,6 +33,13 @@ export const codexHarness: HarnessAdapter = {
 			);
 		}
 
+		// Plugin wiring — codex MCP servers come through as inline TOML
+		// overrides; skills are materialized to `$HOME/.agents/skills/`
+		// and the session sets HOME accordingly via its env merge.
+		for (const override of options.pluginOutputs?.codexConfigOverrides ?? []) {
+			args.push("-c", override);
+		}
+
 		// Codex's resume/continue flag varies by CLI version; the runtime
 		// currently passes the prompt as a positional arg either way. When a
 		// real codex resume mechanism is wired, branch on options.continueSession.
