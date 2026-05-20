@@ -4,6 +4,9 @@ This changelog documents internal development changes, refactors, tooling update
 
 ## [Unreleased]
 
+### Changed
+- Updated `@anthropic-ai/claude-agent-sdk` from `0.2.123` to `0.3.145` and `@anthropic-ai/sdk` from `^0.91.0` to `^0.97.1`. See [SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md) for full details. Refreshed tool allowance list per mandatory process (`./scripts/extract-claude-tools.sh`): added `LSP`, removed `RemoteTrigger`. Added `diagnostics: null` to `BetaMessage` literals in cursor-runner, codex-runner, and gemini-runner (new required field in `@anthropic-ai/sdk` 0.97.x). ([CYPACK-1218](https://linear.app/ceedar/issue/CYPACK-1218), [#1231](https://github.com/cyrusagents/cyrus/pull/1231))
+
 ## [0.2.52] - 2026-05-13
 
 _No internal-only changes._
