@@ -117,13 +117,21 @@ function defaultClaudeCliPath(workingDir: string): string {
 // Setup commands that run inside a fresh Daytona sandbox before the
 // harness invocation. Used only when no custom snapshot is supplied —
 // a custom snapshot is expected to have Claude preinstalled.
+//
+// Claude CLI is pinned to a specific version so the stream-json shape
+// the harness emits matches what `@anthropic-ai/claude-agent-sdk@0.2.123`
+// (the SDK we type `HarnessRawByKind["claude"]` against) describes.
+// Using `@latest` here would let a future CLI release silently introduce
+// fields/variants the SDK pin doesn't know about — exactly the kind of
+// drift the SDK-typed events were meant to eliminate.
+const PINNED_CLAUDE_CLI_VERSION = "2.1.145";
 function buildDefaultClaudeSetupCommands(
 	workingDir: string,
 	cliPath: string,
 ): string[] {
 	return [
 		`npm config set prefix ${workingDir}/.npm-global`,
-		"npm install -g @anthropic-ai/claude-code@latest >/dev/null 2>&1",
+		`npm install -g @anthropic-ai/claude-code@${PINNED_CLAUDE_CLI_VERSION} >/dev/null 2>&1`,
 		`${cliPath} --version`,
 	];
 }

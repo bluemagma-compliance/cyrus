@@ -67,7 +67,7 @@ const session = await createAgentSession(
 		packages: {
 			commands: [
 				"npm config set prefix /home/daytona/.npm-global",
-				"npm install -g @anthropic-ai/claude-code@latest >/dev/null 2>&1",
+				"npm install -g @anthropic-ai/claude-code@2.1.145 >/dev/null 2>&1",
 				"/home/daytona/.npm-global/bin/claude --version",
 			],
 		},
