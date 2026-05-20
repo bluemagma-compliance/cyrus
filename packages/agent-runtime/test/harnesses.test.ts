@@ -105,7 +105,7 @@ describe("harness adapters", () => {
 		]);
 	});
 
-	it("builds a Cursor command that spawns the vendored SDK driver", () => {
+	it("builds a Cursor command via the host-resolved @cyrus/cursor-runner when harness.command is unset", () => {
 		const command = buildHarnessInvocation(
 			{
 				...baseConfig,
@@ -116,17 +116,42 @@ describe("harness adapters", () => {
 			{ userPrompt: "Patch the bug" },
 		);
 
-		// We now spawn `node <@cyrus/cursor-runner>` instead of `cursor-agent`
-		// so the stdout stream is `@cursor/sdk`'s `SDKMessage` directly.
-		// The runner path is resolved at module-load time via
-		// `createRequire(import.meta.url).resolve("@cyrus/cursor-runner")`;
-		// pnpm/npm resolves through workspace symlinks to a real on-disk
-		// path that doesn't necessarily contain the package name literal,
-		// so we assert the entry filename instead.
+		// Local-provider path: no `harness.command` override, so the
+		// adapter resolves `@cyrus/cursor-runner` from the host's
+		// node_modules and spawns `node <resolved-path>`. The exact
+		// filesystem location depends on pnpm/npm linking, so we
+		// assert the entry filename instead of pinning the whole path.
 		expect(command.command).toBe("node");
 		const runnerPath = command.args[0]!;
 		expect(runnerPath).toMatch(/cursor-(sdk-)?runner[/\\]dist[/\\]index\.js$/);
 		expect(command.args.slice(1)).toEqual([
+			"--prompt",
+			"Patch the bug",
+			"--model",
+			"composer-2",
+			"--cwd",
+			"/tmp/worktree",
+		]);
+	});
+
+	it("uses harness.command directly as the cursor-runner binary when supplied (Daytona-snapshot mode)", () => {
+		const command = buildHarnessInvocation(
+			{
+				...baseConfig,
+				harness: { kind: "cursor", command: "cursor-runner" },
+				model: "composer-2",
+				permissions: { mode: "ask" },
+			},
+			{ userPrompt: "Patch the bug" },
+		);
+
+		// Snapshot path: caller supplies `harness.command`, the adapter
+		// spawns it directly (the runner's `#!/usr/bin/env node` shebang
+		// makes it executable). The command is whatever the caller
+		// passed — `"cursor-runner"` for PATH resolution inside the
+		// sandbox, or an absolute path to pin a specific copy.
+		expect(command.command).toBe("cursor-runner");
+		expect(command.args).toEqual([
 			"--prompt",
 			"Patch the bug",
 			"--model",

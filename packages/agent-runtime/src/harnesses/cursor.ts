@@ -8,23 +8,32 @@ import type {
 import { createCommand, parseJsonLine, resolveModel } from "./common.js";
 
 /**
- * Absolute path to the `@cyrus/cursor-runner` CLI entry, resolved via
- * Node's standard module resolution from the runtime's package root.
+ * Host-side fallback path to the `@cyrus/cursor-runner` CLI, resolved
+ * once at module load via Node's standard module resolution.
+ *
+ * Used when the caller does NOT supply `harness.command` — i.e. for the
+ * local provider, where `@cyrus/cursor-runner` ships under the host's
+ * `node_modules/` and `createRequire` finds it there.
+ *
+ * For the daytona provider, callers should supply `harness.command`
+ * pointing at the runner inside the sandbox (typically `"cursor-runner"`
+ * resolved via PATH, since snapshots ship the runner preinstalled
+ * alongside the harness binaries — same model as `DAYTONA_CLAUDE_CLI_PATH`).
  *
  * Why a separately published package: `@cyrus/cursor-runner` is a thin
  * SDK driver that wraps `@cursor/sdk` and emits `SDKMessage` events as
  * JSONL — exactly the wire format `parseJsonLine` parses below. Owning
  * the producer means the cursor stream IS the SDK union by construction
- * (no schema drift), and exporting it as a standalone CLI keeps the
+ * (no schema drift), and shipping it as a standalone CLI keeps the
  * Cursor `@cursor/sdk` runtime dependency out of agent-runtime's
  * surface (it's a devDep here, just for the `SDKMessage` type import).
  *
  * Resolved with `createRequire(import.meta.url)` rather than a relative
  * `import.meta.url` URL so the path follows wherever pnpm/npm linked
- * the package — which is the right behavior for both workspace symlinks
- * and node_modules installs.
+ * the package — right behavior for both workspace symlinks and
+ * node_modules installs on the host.
  */
-const CURSOR_RUNNER_PATH = createRequire(import.meta.url).resolve(
+const HOST_CURSOR_RUNNER_PATH = createRequire(import.meta.url).resolve(
 	"@cyrus/cursor-runner",
 );
 
@@ -40,10 +49,27 @@ export const cursorHarness: HarnessAdapter = {
 		config: NormalizedAgentSessionConfig,
 		options: HarnessRunOptions,
 	) {
-		// We spawn `node <@cyrus/cursor-runner>` instead of `cursor-agent`
-		// so the wire format matches `@cursor/sdk`'s `SDKMessage` union
-		// by construction. See `@cyrus/cursor-runner`'s README for the why.
-		const args = [CURSOR_RUNNER_PATH, "--prompt", options.userPrompt];
+		// We invoke `@cyrus/cursor-runner` instead of `cursor-agent` so the
+		// wire format matches `@cursor/sdk`'s `SDKMessage` union by
+		// construction. See `@cyrus/cursor-runner`'s README for the why.
+		//
+		// Two invocation shapes:
+		// - When `harness.command` is set (daytona snapshots), it's the
+		//   path to (or name of) the `cursor-runner` bin inside the
+		//   sandbox. The bin has a `#!/usr/bin/env node` shebang, so we
+		//   spawn it directly. Caller-provided value flows through
+		//   verbatim — `"cursor-runner"` to use PATH resolution,
+		//   absolute path to pin a specific copy.
+		// - When `harness.command` is unset (local provider), we fall
+		//   back to spawning the host-resolved runner via `node <path>`.
+		//   `node` rather than direct exec because the resolved path
+		//   points at the package's `dist/index.js` inside pnpm's
+		//   .pnpm store, which may not be marked executable.
+		const command = config.harness.command ?? "node";
+		const args =
+			config.harness.command !== undefined
+				? ["--prompt", options.userPrompt]
+				: [HOST_CURSOR_RUNNER_PATH, "--prompt", options.userPrompt];
 
 		const model = resolveModel(config);
 		if (model) {
@@ -77,7 +103,7 @@ export const cursorHarness: HarnessAdapter = {
 		// today (per AgentChatSessionHandler's docstring) so this gap doesn't
 		// regress anything that ships.
 
-		return createCommand(config, "node", args);
+		return createCommand(config, command, args);
 	},
 	parseStdoutLine(line, context) {
 		return parseJsonLine("cursor", line, context);
