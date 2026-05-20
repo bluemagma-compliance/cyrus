@@ -97,5 +97,7 @@ console.log("[turn 2]", {
 });
 
 const remembered = result2.result?.includes("BANANA-7");
-console.log(remembered ? "PASS — resume works" : "FAIL — turn 2 did not recall turn 1");
+console.log(
+	remembered ? "PASS — resume works" : "FAIL — turn 2 did not recall turn 1",
+);
 process.exit(remembered ? 0 : 1);

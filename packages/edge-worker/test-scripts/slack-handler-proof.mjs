@@ -46,7 +46,9 @@ const adapter = {
 		return "";
 	},
 	async postReply(event, finalText) {
-		console.log(`  [postReply for event=${event.eventId}] text=${JSON.stringify(finalText)}`);
+		console.log(
+			`  [postReply for event=${event.eventId}] text=${JSON.stringify(finalText)}`,
+		);
 		postedReplies.push({ eventId: event.eventId, text: finalText });
 	},
 	async acknowledgeReceipt(_event) {

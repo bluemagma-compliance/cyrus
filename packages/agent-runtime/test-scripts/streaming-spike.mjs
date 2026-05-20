@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 // Streaming spike for the agent-runtime sandbox abstraction.
 //
 // Exercises RunnerSandbox.streamCommand() on two providers:
@@ -19,9 +20,9 @@
 //   pnpm --filter cyrus-agent-runtime build
 //   node packages/agent-runtime/test-scripts/streaming-spike.mjs daytona
 
-import { createLocalSandboxProvider } from "../dist/sandbox/local.js";
-import { createComputeSdkSandboxProvider } from "../dist/sandbox/compute-sdk.js";
 import { createAgentSession } from "../dist/runtime.js";
+import { createComputeSdkSandboxProvider } from "../dist/sandbox/compute-sdk.js";
+import { createLocalSandboxProvider } from "../dist/sandbox/local.js";
 
 const mode = process.argv[2] ?? "local";
 
@@ -45,12 +46,12 @@ async function runLocalSpike() {
 	// land at ~400/800/1200/1600/2000ms; if it doesn't, we'll see all of
 	// them at the end.
 	const command =
-		"node -e \"" +
+		'node -e "' +
 		"let i = 0;" +
 		"const t = setInterval(() => {" +
 		"  i++; console.log('line ' + i + ' at ' + Date.now());" +
 		"  if (i >= 5) { clearInterval(t); console.error('done'); }" +
-		"}, 400);\"";
+		'}, 400);"';
 
 	const startedAt = Date.now();
 	const arrivals = [];
@@ -157,7 +158,7 @@ async function runDaytonaSpike() {
 		const shellStartedAt = Date.now();
 		const shellArrivals = [];
 		const shellResult = await sandbox.streamCommand(
-			"for i in 1 2 3 4 5; do echo \"shell line $i @ $(date +%s%3N)\"; sleep 0.4; done",
+			'for i in 1 2 3 4 5; do echo "shell line $i @ $(date +%s%3N)"; sleep 0.4; done',
 			{
 				onStdout: (chunk) => {
 					const t = Date.now() - shellStartedAt;

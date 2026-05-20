@@ -42,11 +42,15 @@ function fmt(ms) {
 function verifyResume(turn2Result) {
 	const text = (turn2Result.result ?? "").toUpperCase();
 	if (text.includes(CODE_WORD)) {
-		console.log(`\n  ✓ Resume confirmed: turn-2 response contains "${CODE_WORD}".`);
+		console.log(
+			`\n  ✓ Resume confirmed: turn-2 response contains "${CODE_WORD}".`,
+		);
 		console.log(`    Full response: ${JSON.stringify(turn2Result.result)}`);
 		return true;
 	}
-	console.error(`\n  ✗ Resume FAILED: turn-2 response did not contain "${CODE_WORD}".`);
+	console.error(
+		`\n  ✗ Resume FAILED: turn-2 response did not contain "${CODE_WORD}".`,
+	);
 	console.error(`    Got: ${JSON.stringify(turn2Result.result)}`);
 	return false;
 }
@@ -55,7 +59,9 @@ const TURN_1 = `Remember this code word for me: ${CODE_WORD}. Respond with exact
 const TURN_2 = `What was the code word I asked you to remember? Reply with only the code word, nothing else.`;
 
 async function runLocalMode() {
-	console.log("\n=== Multi-turn resume — LOCAL sandbox, local claude CLI ===\n");
+	console.log(
+		"\n=== Multi-turn resume — LOCAL sandbox, local claude CLI ===\n",
+	);
 	const claudeToken =
 		process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_AUTH_TOKEN;
 	if (!claudeToken) {
@@ -107,7 +113,9 @@ async function runLocalMode() {
 		if (!passed) process.exit(1);
 	} finally {
 		await rm(root, { recursive: true, force: true }).catch(() => {});
-		await rm(agentSessionsRoot, { recursive: true, force: true }).catch(() => {});
+		await rm(agentSessionsRoot, { recursive: true, force: true }).catch(
+			() => {},
+		);
 	}
 }
 
@@ -178,14 +186,20 @@ async function runDaytonaWarmMode() {
 		console.log(
 			`  turn 1: success=${r1.success} duration=${fmt(Date.now() - t0)} response=${JSON.stringify(r1.result)}`,
 		);
-		console.log("  turn 1 event kinds:", r1.events.map((e) => e.kind));
+		console.log(
+			"  turn 1 event kinds:",
+			r1.events.map((e) => e.kind),
+		);
 		// Dump the LAST event of each kind to see its shape — usually the
 		// `result` envelope is the one extractResult cares about.
 		const lastResult = [...r1.events]
 			.reverse()
 			.find((e) => e.kind === "result");
 		if (lastResult) {
-			console.log("  turn 1 last result.raw =", JSON.stringify(lastResult.raw).slice(0, 400));
+			console.log(
+				"  turn 1 last result.raw =",
+				JSON.stringify(lastResult.raw).slice(0, 400),
+			);
 		}
 		if (!r1.success) {
 			console.error(`  turn 1 error: ${r1.error?.message}`);
@@ -292,7 +306,9 @@ async function runDaytonaEfficientMode() {
 		console.log("\n  (sandbox should be destroyed now — pausing 3s)");
 		await new Promise((r) => setTimeout(r, 3000));
 
-		console.log("\nturn 2: ask for code word (cold sandbox, mount volume, --continue)…");
+		console.log(
+			"\nturn 2: ask for code word (cold sandbox, mount volume, --continue)…",
+		);
 		const t1 = Date.now();
 		const r2 = await session.run(TURN_2);
 		console.log(
