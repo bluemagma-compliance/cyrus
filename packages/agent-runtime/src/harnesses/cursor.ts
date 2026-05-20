@@ -90,18 +90,18 @@ export const cursorHarness: HarnessAdapter = {
 			args.push("--system-prompt", config.systemPrompt);
 		}
 
-		// Cross-turn resume: the agentId is written to
-		// `<sessionStateRoot>/cursor-agent-id` on first turn and passed
-		// back as `--agent-id` on subsequent turns. The runtime's
-		// per-session state backing owns the file; the harness adapter
-		// just declares its name.
-		//
-		// TODO: thread the actual state-backing path through HarnessRunOptions
-		// so we can produce a real `--agent-id-file` value here. For now the
-		// driver runs without resume — works for single-turn chat, breaks for
-		// multi-turn Slack threads on Cursor. The chat handler is Claude-only
-		// today (per AgentChatSessionHandler's docstring) so this gap doesn't
-		// regress anything that ships.
+		// Cross-turn resume: caller persists the agentId returned in a
+		// prior AgentSessionResult.harnessSessionId and hands it back as
+		// `config.resumeHarnessSessionId`. The cursor-runner translates
+		// it to `Agent.resume(<id>)` via its `--agent-id` flag, so the
+		// run picks up the prior conversation. Driver-side
+		// `--agent-id-file` still works for callers that want the runner
+		// to record the agentId itself; we just don't need it from this
+		// adapter because the runtime now surfaces the id via
+		// extractSessionId below.
+		if (config.resumeHarnessSessionId) {
+			args.push("--agent-id", config.resumeHarnessSessionId);
+		}
 
 		return createCommand(config, command, args);
 	},
@@ -122,6 +122,27 @@ export const cursorHarness: HarnessAdapter = {
 				if (block.type === "text" && typeof block.text === "string") {
 					return block.text;
 				}
+			}
+		}
+		return undefined;
+	},
+	extractSessionId(events) {
+		// `@cursor/sdk` puts `agent_id` on every SDKMessage variant
+		// (status, tool_call, assistant, user, thinking, request, task,
+		// system). It's stable across the run — first event on the
+		// stream carries the canonical id, and it doesn't change after.
+		// Scan in arrival order and return the first non-empty value.
+		//
+		// `event.raw` is typed `SDKMessage` for `harness: "cursor"`, but
+		// runtime lifecycle events (e.g. plain text from stderr) emit
+		// strings or other shapes through the same stream. Guard with a
+		// plain-object check before peeking at `agent_id`.
+		for (const event of events) {
+			const raw = event.raw;
+			if (typeof raw !== "object" || raw === null) continue;
+			const agentId = (raw as { agent_id?: unknown }).agent_id;
+			if (typeof agentId === "string" && agentId.length > 0) {
+				return agentId;
 			}
 		}
 		return undefined;

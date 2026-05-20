@@ -206,6 +206,88 @@ describe("harness adapters", () => {
 		]);
 	});
 
+	it("threads resumeHarnessSessionId into the cursor runner as --agent-id", () => {
+		const command = buildHarnessInvocation(
+			{
+				...baseConfig,
+				harness: { kind: "cursor", command: "cursor-runner" },
+				resumeHarnessSessionId: "agent-74f4af34",
+			},
+			{ userPrompt: "carry on" },
+		);
+
+		// Spawning shape is unchanged — the resume flag is just
+		// appended to args. The runner reads it and calls
+		// Agent.resume(agent-74f4af34) instead of Agent.create().
+		expect(command.command).toBe("cursor-runner");
+		expect(command.args).toContain("--agent-id");
+		const idx = command.args.indexOf("--agent-id");
+		expect(command.args[idx + 1]).toBe("agent-74f4af34");
+	});
+
+	it("omits --agent-id when resumeHarnessSessionId is not set", () => {
+		const command = buildHarnessInvocation(
+			{
+				...baseConfig,
+				harness: { kind: "cursor", command: "cursor-runner" },
+			},
+			{ userPrompt: "fresh start" },
+		);
+		expect(command.args).not.toContain("--agent-id");
+	});
+
+	it("extracts the harness-native agent id from the first cursor SDKMessage", () => {
+		const adapter = getHarnessAdapter("cursor");
+		// Cursor's first stream event is typically a `status` message
+		// with `agent_id` set — every SDKMessage variant carries it,
+		// so any of them work. Use the realistic shape from a captured
+		// run.
+		const sessionId = adapter.extractSessionId?.([
+			{
+				sessionId: "cy-1",
+				harness: "cursor",
+				timestamp: new Date().toISOString(),
+				kind: "status",
+				raw: {
+					type: "status",
+					agent_id: "agent-74f4af34-9d01-4b98-b271-21ea87c68ca6",
+					run_id: "run-dc52f12e-1269-49d1-907a-b6c399501c8d",
+					status: "RUNNING",
+				},
+			},
+			{
+				sessionId: "cy-1",
+				harness: "cursor",
+				timestamp: new Date().toISOString(),
+				kind: "assistant",
+				raw: {
+					type: "assistant",
+					agent_id: "agent-74f4af34-9d01-4b98-b271-21ea87c68ca6",
+					run_id: "run-dc52f12e-1269-49d1-907a-b6c399501c8d",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "hi" }],
+					},
+				},
+			},
+		]);
+		expect(sessionId).toBe("agent-74f4af34-9d01-4b98-b271-21ea87c68ca6");
+	});
+
+	it("returns undefined when no cursor event carries an agent_id", () => {
+		const adapter = getHarnessAdapter("cursor");
+		const sessionId = adapter.extractSessionId?.([
+			{
+				sessionId: "cy-1",
+				harness: "cursor",
+				timestamp: new Date().toISOString(),
+				kind: "text",
+				raw: "no agent_id in a plain string event",
+			},
+		]);
+		expect(sessionId).toBeUndefined();
+	});
+
 	it("builds a Gemini command with env-backed system prompt", () => {
 		const command = buildHarnessInvocation(
 			{
