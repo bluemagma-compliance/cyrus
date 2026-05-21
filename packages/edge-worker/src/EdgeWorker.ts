@@ -5664,7 +5664,7 @@ ${taskSection}`;
 			sessionId: session.id,
 			runnerSessionId,
 			runnerType,
-			linearIssueIdentifier:
+			sourceIssueIdentifier:
 				session.issueContext?.issueIdentifier ??
 				session.issue?.identifier ??
 				null,

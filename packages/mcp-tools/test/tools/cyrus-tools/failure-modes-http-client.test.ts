@@ -9,8 +9,6 @@ describe("createFetchFailureModesClient", () => {
 					JSON.stringify({
 						success: true,
 						reportId: 42,
-						action: "created",
-						linearIssueUrl: "https://linear.app/x/issue/Y-1",
 					}),
 					{ status: 200, headers: { "content-type": "application/json" } },
 				),
@@ -42,8 +40,6 @@ describe("createFetchFailureModesClient", () => {
 		expect(result).toEqual({
 			ok: true,
 			reportId: 42,
-			action: "created",
-			linearIssueUrl: "https://linear.app/x/issue/Y-1",
 		});
 	});
 

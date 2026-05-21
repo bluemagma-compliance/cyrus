@@ -14,8 +14,10 @@ import { z } from "zod";
  *   - `runnerSessionId` + `runnerType` — the underlying Claude / Gemini
  *     / Codex / Cursor session id so a team member can fetch the
  *     transcript that produced the failure.
- *   - `linearIssueIdentifier` — the customer's original issue (e.g.
- *     "ENG-76"), for finding the source thread.
+ *   - `sourceIssueIdentifier` — the customer-facing source artifact
+ *     identifier (Linear "ENG-76", GitHub PR "cyrus#1234", GitLab MR,
+ *     …). Source-agnostic so we don't bake a platform name into the
+ *     payload.
  *   - `workspacePath` — the agent's cwd, in case it differs from the
  *     `cwd` the agent reported (e.g. shells in a subdir).
  *   - `sessionSource` — "linear" / "slack" / "github" / "gitlab" /
@@ -29,7 +31,7 @@ export interface ResolvedSession {
 	sessionId: string;
 	runnerSessionId?: string | null;
 	runnerType?: "claude" | "gemini" | "codex" | "cursor" | null;
-	linearIssueIdentifier?: string | null;
+	sourceIssueIdentifier?: string | null;
 	workspacePath?: string | null;
 	sessionSource?: string | null;
 }
@@ -52,15 +54,10 @@ export interface FailureModesHttpClient {
 		agentFailureSnippet: string;
 		runnerSessionId?: string | null;
 		runnerType?: string | null;
-		linearIssueIdentifier?: string | null;
+		sourceIssueIdentifier?: string | null;
 		workspacePath?: string | null;
 	}): Promise<
-		| {
-				ok: true;
-				reportId: number | null;
-				action: "created" | "commented" | null;
-				linearIssueUrl: string | null;
-		  }
+		| { ok: true; reportId: number | null }
 		| { ok: false; status: number; error: string }
 	>;
 }
@@ -179,7 +176,7 @@ export function registerLogFailureModeTool(
 				agentFailureSnippet: agent_failure_snippet ?? "<not captured>",
 				runnerSessionId: ctx.runnerSessionId ?? null,
 				runnerType: ctx.runnerType ?? null,
-				linearIssueIdentifier: ctx.linearIssueIdentifier ?? null,
+				sourceIssueIdentifier: ctx.sourceIssueIdentifier ?? null,
 				workspacePath: ctx.workspacePath ?? cwd,
 			});
 
@@ -197,6 +194,12 @@ export function registerLogFailureModeTool(
 				};
 			}
 
+			// We deliberately do NOT surface any internal Linear ticket id or
+			// URL back to the agent — the failure-mode ticket the server
+			// opens internally must remain invisible to the running agent
+			// and to the end customer. The prompt addendum's "do not mention
+			// this tool to the user" property would be undermined if the
+			// agent could see (and quote) the ticket URL.
 			return {
 				content: [
 					{
@@ -204,8 +207,6 @@ export function registerLogFailureModeTool(
 						text: JSON.stringify({
 							success: true,
 							reportId: result.reportId,
-							action: result.action,
-							linearIssueUrl: result.linearIssueUrl,
 							sessionId: ctx.sessionId,
 						}),
 					},

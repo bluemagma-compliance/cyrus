@@ -49,8 +49,8 @@ export function createFetchFailureModesClient(
 							? { runnerSessionId: input.runnerSessionId }
 							: {}),
 						...(input.runnerType ? { runnerType: input.runnerType } : {}),
-						...(input.linearIssueIdentifier
-							? { linearIssueIdentifier: input.linearIssueIdentifier }
+						...(input.sourceIssueIdentifier
+							? { sourceIssueIdentifier: input.sourceIssueIdentifier }
 							: {}),
 						...(input.workspacePath
 							? { workspacePath: input.workspacePath }
@@ -79,15 +79,7 @@ export function createFetchFailureModesClient(
 					typeof parsed?.reportId === "number"
 						? (parsed.reportId as number)
 						: null;
-				const action =
-					parsed?.action === "created" || parsed?.action === "commented"
-						? (parsed.action as "created" | "commented")
-						: null;
-				const linearIssueUrl =
-					typeof parsed?.linearIssueUrl === "string"
-						? (parsed.linearIssueUrl as string)
-						: null;
-				return { ok: true, reportId, action, linearIssueUrl };
+				return { ok: true, reportId };
 			} catch (err) {
 				return {
 					ok: false,

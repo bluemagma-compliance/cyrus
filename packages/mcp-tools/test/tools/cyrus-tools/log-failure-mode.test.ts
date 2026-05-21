@@ -27,8 +27,6 @@ describe("log_failure_mode tool", () => {
 			postFailureMode: vi.fn(async () => ({
 				ok: true,
 				reportId: 7,
-				action: "created" as const,
-				linearIssueUrl: "https://linear.app/ceedar/issue/CYPACK-9999",
 			})),
 		};
 		resolveSessionFromCwd = vi.fn((cwd: string) =>
@@ -60,16 +58,20 @@ describe("log_failure_mode tool", () => {
 			agentFailureSnippet: "PR opened: https://github.com/x/y/pull/1",
 			runnerSessionId: null,
 			runnerType: null,
-			linearIssueIdentifier: null,
+			sourceIssueIdentifier: null,
 			workspacePath: "/work/CYPACK-1",
 		});
 
 		const payload = JSON.parse(result.content[0].text);
 		expect(payload.success).toBe(true);
 		expect(payload.reportId).toBe(7);
-		expect(payload.action).toBe("created");
-		expect(payload.linearIssueUrl).toMatch(/CYPACK-9999/);
 		expect(payload.sessionId).toBe("session-abc");
+		// Linear issue id/url MUST NOT be surfaced back to the agent — the
+		// internal failure-mode ticket has to remain invisible to the
+		// running session and to the end customer.
+		expect(payload.linearIssueUrl).toBeUndefined();
+		expect(payload.linearIssueId).toBeUndefined();
+		expect(payload.action).toBeUndefined();
 	});
 
 	it("infers sessionSource from a `github-` prefix", async () => {
@@ -121,7 +123,7 @@ describe("log_failure_mode tool", () => {
 				sessionId: "cyrus-internal-abc",
 				runnerSessionId: "claude-9f87",
 				runnerType: "claude" as const,
-				linearIssueIdentifier: "ENG-76",
+				sourceIssueIdentifier: "ENG-76",
 				workspacePath: "/home/payton/.cyrus/worktrees/ENG-76",
 				sessionSource: "linear",
 			}),
@@ -139,7 +141,7 @@ describe("log_failure_mode tool", () => {
 		expect(callArg.sessionId).toBe("cyrus-internal-abc");
 		expect(callArg.runnerSessionId).toBe("claude-9f87");
 		expect(callArg.runnerType).toBe("claude");
-		expect(callArg.linearIssueIdentifier).toBe("ENG-76");
+		expect(callArg.sourceIssueIdentifier).toBe("ENG-76");
 		expect(callArg.workspacePath).toBe("/home/payton/.cyrus/worktrees/ENG-76");
 	});
 
