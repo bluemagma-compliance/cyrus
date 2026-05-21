@@ -414,6 +414,37 @@ export const EdgeConfigSchema = z.object({
 	githubAllowedTools: z.array(z.string()).optional(),
 
 	/**
+	 * Filesystem paths to MCP config JSON files (Claude Code `.mcp.json`
+	 * format) the runtime should load for Slack `@mention` chat sessions.
+	 * When set and non-empty, this list is authoritative — only these
+	 * servers are spun up for Slack sessions. When omitted or empty, the
+	 * runtime falls back to the legacy behavior (per-repo `mcpConfigPath`
+	 * picked from the first configured repository — see
+	 * `ChatRepositoryProvider.getDefaultRepository()`).
+	 *
+	 * The per-platform lists let cyrus-hosted route MCP server availability
+	 * per surface — e.g. expose `slack-mcp-server` only on Slack, or scope
+	 * a Supabase MCP to GitHub PR sessions but not Linear issue work. Each
+	 * entry is passed as-is to Claude Code's `--mcp-config` mechanism.
+	 */
+	slackMcpConfigs: z.array(z.string()).optional(),
+
+	/**
+	 * Filesystem paths to MCP config JSON files for Linear-triggered agent
+	 * sessions. Same semantics as `slackMcpConfigs`. Falls back to the
+	 * unioned `repository.mcpConfigPath` of every routed repo when omitted.
+	 */
+	linearMcpConfigs: z.array(z.string()).optional(),
+
+	/**
+	 * Filesystem paths to MCP config JSON files for GitHub-triggered agent
+	 * sessions. Same semantics as `slackMcpConfigs`. Falls back to the
+	 * single target repo's `mcpConfigPath` when omitted (GitHub `@mentions`
+	 * are always single-repo).
+	 */
+	githubMcpConfigs: z.array(z.string()).optional(),
+
+	/**
 	 * Whether to trigger agent sessions when issue title, description, or attachments are updated.
 	 * When enabled, the agent receives context showing what changed (old vs new values).
 	 * Defaults to true if not specified.

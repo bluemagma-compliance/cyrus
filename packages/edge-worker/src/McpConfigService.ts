@@ -142,6 +142,31 @@ export class McpConfigService {
 	}
 
 	/**
+	 * Resolve the MCP config paths to load for a session, honoring the
+	 * per-platform override list when set.
+	 *
+	 * When `platformOverrides` is non-empty, those paths are authoritative —
+	 * the runtime ignores the repo-derived list entirely. When it's empty
+	 * or undefined, this falls back to `buildMergedMcpConfigPath()` over
+	 * the session's repos (the pre-platform-override behavior).
+	 *
+	 * Callers (`RunnerConfigBuilder`, `EdgeWorker`) thread in the relevant
+	 * `EdgeWorkerConfig.{slack,linear,github}McpConfigs` value depending on
+	 * which platform owns the session.
+	 */
+	resolveMcpConfigPaths(
+		platformOverrides: readonly string[] | undefined,
+		repositories: RepositoryConfig | RepositoryConfig[],
+	): string | string[] | undefined {
+		if (platformOverrides && platformOverrides.length > 0) {
+			return platformOverrides.length === 1
+				? platformOverrides[0]
+				: [...platformOverrides];
+		}
+		return this.buildMergedMcpConfigPath(repositories);
+	}
+
+	/**
 	 * Merge mcpConfigPath from multiple repositories into a single list.
 	 * For same-name .mcp.json servers across repos, last wins (handled by Claude's merge behavior).
 	 */

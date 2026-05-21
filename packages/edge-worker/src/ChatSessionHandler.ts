@@ -61,6 +61,13 @@ export interface ChatSessionHandlerDeps {
 	runnerConfigBuilder: RunnerConfigBuilder;
 	/** Factory function that creates the appropriate runner based on config.defaultRunner */
 	createRunner: (config: AgentRunnerConfig) => IAgentRunner;
+	/**
+	 * Live read of the workspace-level MCP config overrides for the chat
+	 * platform this handler is bound to (e.g. `config.slackMcpConfigs` for
+	 * Slack). When non-empty, these `.mcp.json` paths are authoritative —
+	 * `repository.mcpConfigPath` is ignored.
+	 */
+	getPlatformMcpConfigOverrides?: () => readonly string[] | undefined;
 	onWebhookStart: () => void;
 	onWebhookEnd: () => void;
 	onStateChange: () => Promise<void>;
@@ -506,6 +513,7 @@ export class ChatSessionHandler<TEvent> {
 			linearWorkspaceId: provider.getDefaultLinearWorkspaceId(),
 			repository: provider.getDefaultRepository(),
 			repositoryPaths: provider.getRepositoryPaths(),
+			platformMcpConfigOverrides: this.deps.getPlatformMcpConfigOverrides?.(),
 			logger: sessionLogger,
 			onMessage: (message: SDKMessage) =>
 				this.handleAgentMessage(sessionId, message),

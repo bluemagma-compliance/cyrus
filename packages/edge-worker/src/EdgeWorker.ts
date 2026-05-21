@@ -1047,6 +1047,9 @@ export class EdgeWorker extends EventEmitter {
 						fallbackModel: this.getDefaultFallbackModelForRunner(runnerType),
 					});
 				},
+				// Live read so hot-reloaded config (`setConfig`) picks up new
+				// per-platform MCP paths without rebuilding the handler.
+				getPlatformMcpConfigOverrides: () => this.config.slackMcpConfigs,
 				onWebhookStart: () => {
 					this.activeWebhookCount++;
 				},
@@ -1404,6 +1407,9 @@ export class EdgeWorker extends EventEmitter {
 					undefined, // issueDescription
 					200, // maxTurns
 					{ excludeSlackMcp: true }, // Exclude Slack MCP server from GitHub sessions
+					undefined, // linearWorkspaceId
+					undefined, // skillContext
+					"github", // sessionPlatform → uses githubMcpConfigs override
 				);
 
 			const runner = this.createRunnerForType(runnerType, runnerConfig);
@@ -2070,6 +2076,9 @@ ${taskSection}`;
 					undefined, // issueDescription
 					200, // maxTurns
 					{ excludeSlackMcp: true }, // Exclude Slack MCP server from GitLab sessions
+					undefined, // linearWorkspaceId
+					undefined, // skillContext
+					"gitlab", // sessionPlatform → uses githubMcpConfigs override
 				);
 
 			const runner = this.createRunnerForType(runnerType, runnerConfig);
@@ -6100,6 +6109,12 @@ ${input.userComment}
 		mcpOptions?: { excludeSlackMcp?: boolean },
 		linearWorkspaceId?: string,
 		skillContext?: SkillSessionContext,
+		/**
+		 * Which platform initiated the session — drives which
+		 * `EdgeWorkerConfig.<platform>McpConfigs` override list applies.
+		 * Defaults to `"linear"` (the pre-platform-aware behavior).
+		 */
+		sessionPlatform: "linear" | "github" | "gitlab" = "linear",
 	): Promise<{ config: AgentRunnerConfig; runnerType: RunnerType }> {
 		const log = this.logger.withContext({
 			sessionId,
@@ -6132,6 +6147,14 @@ ${input.userComment}
 			issueDescription,
 			maxTurns,
 			mcpOptions,
+			// Per-platform MCP config overrides — GitHub + GitLab share the
+			// `githubMcpConfigs` knob (single-repo PR contexts both); Linear
+			// gets `linearMcpConfigs`. When the override list is empty the
+			// builder falls back to the repo's `mcpConfigPath` as before.
+			platformMcpConfigOverrides:
+				sessionPlatform === "linear"
+					? this.config.linearMcpConfigs
+					: this.config.githubMcpConfigs,
 			linearWorkspaceId,
 			cyrusHome: this.cyrusHome,
 			logger: log,
@@ -6415,9 +6438,13 @@ ${input.userComment}
 						session.id,
 					);
 
-					// Merge any file-based MCP configs (reuses shared normalization)
-					const mcpConfigPath =
-						this.mcpConfigService.buildMergedMcpConfigPath(repo);
+					// Merge any file-based MCP configs (reuses shared normalization).
+					// Warmup paths are reconstructing Linear-triggered issue
+					// sessions, so the Linear override list applies.
+					const mcpConfigPath = this.mcpConfigService.resolveMcpConfigPaths(
+						this.config.linearMcpConfigs,
+						repo,
+					);
 					let mcpServers: Record<string, McpServerConfig> = { ...mcpConfig };
 					if (mcpConfigPath) {
 						const paths = Array.isArray(mcpConfigPath)

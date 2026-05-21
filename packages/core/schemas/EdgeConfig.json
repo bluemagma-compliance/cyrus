@@ -582,6 +582,24 @@
 				"type": "string"
 			}
 		},
+		"slackMcpConfigs": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"linearMcpConfigs": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"githubMcpConfigs": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
 		"issueUpdateTrigger": {
 			"type": "boolean"
 		},

@@ -32,6 +32,10 @@ export interface IMcpConfigProvider {
 	buildMergedMcpConfigPath(
 		repositories: RepositoryConfig | RepositoryConfig[],
 	): string | string[] | undefined;
+	resolveMcpConfigPaths(
+		platformOverrides: readonly string[] | undefined,
+		repositories: RepositoryConfig | RepositoryConfig[],
+	): string | string[] | undefined;
 }
 
 /**
@@ -78,6 +82,14 @@ export interface ChatRunnerConfigInput {
 	repository?: RepositoryConfig;
 	/** Repository paths the chat session can read */
 	repositoryPaths?: string[];
+	/**
+	 * Per-platform MCP config path overrides (`EdgeWorkerConfig.slackMcpConfigs`
+	 * for Slack chat sessions). When non-empty, this list is authoritative —
+	 * the runtime ignores `repository.mcpConfigPath` and loads exactly these
+	 * `.mcp.json` files instead. When omitted/empty, falls back to the
+	 * legacy repo-derived behavior.
+	 */
+	platformMcpConfigOverrides?: readonly string[];
 	logger: ILogger;
 	onMessage: (message: SDKMessage) => void | Promise<void>;
 	onError: (error: Error) => void;
@@ -99,6 +111,13 @@ export interface IssueRunnerConfigInput {
 	issueDescription?: string;
 	maxTurns?: number;
 	mcpOptions?: { excludeSlackMcp?: boolean };
+	/**
+	 * Per-platform MCP config path overrides. For Linear issue sessions
+	 * callers thread `EdgeWorkerConfig.linearMcpConfigs`; for GitHub PR
+	 * sessions, `githubMcpConfigs`. When non-empty, those files become
+	 * authoritative and the repo-derived list is skipped.
+	 */
+	platformMcpConfigOverrides?: readonly string[];
 	linearWorkspaceId?: string;
 	cyrusHome: string;
 	logger: ILogger;
@@ -154,10 +173,21 @@ export class RunnerConfigBuilder {
 	 * config without hooks or model selection.
 	 */
 	buildChatConfig(input: ChatRunnerConfigInput): AgentRunnerConfig {
-		// Derive user-configured MCP config path from the repository
+		// MCP config paths: prefer the platform override list when set —
+		// it's the only source consulted. Otherwise fall back to the
+		// repository's mcpConfigPath (legacy behavior).
 		const mcpConfigPath = input.repository
-			? this.mcpConfigProvider.buildMergedMcpConfigPath(input.repository)
-			: undefined;
+			? this.mcpConfigProvider.resolveMcpConfigPaths(
+					input.platformMcpConfigOverrides,
+					input.repository,
+				)
+			: input.platformMcpConfigOverrides &&
+					input.platformMcpConfigOverrides.length > 0
+				? this.mcpConfigProvider.resolveMcpConfigPaths(
+						input.platformMcpConfigOverrides,
+						[],
+					)
+				: undefined;
 
 		// Build fresh MCP config at session start (reads current token from config)
 		// This follows the same pattern as buildIssueConfig — never use a pre-baked config
@@ -297,7 +327,8 @@ export class RunnerConfigBuilder {
 			input.sessionId,
 			input.mcpOptions,
 		);
-		const mcpConfigPath = this.mcpConfigProvider.buildMergedMcpConfigPath(
+		const mcpConfigPath = this.mcpConfigProvider.resolveMcpConfigPaths(
+			input.platformMcpConfigOverrides,
 			input.repository,
 		);
 
