@@ -108,6 +108,11 @@ export const SLACK_DEFAULT_ALLOWED_TOOLS = [
 	"WebFetch",
 	"WebSearch",
 
+	// User interaction — Slack chat sessions need to send replies back
+	// to the channel and schedule follow-ups.
+	"SendMessage",
+	"ScheduleWakeup",
+
 	// Planning + task lifecycle
 	"Task",
 	"TaskCreate",
@@ -115,6 +120,7 @@ export const SLACK_DEFAULT_ALLOWED_TOOLS = [
 	"TaskGet",
 	"TaskList",
 	"TaskOutput",
+	"TaskStop",
 	"EnterPlanMode",
 	"ExitPlanMode",
 
