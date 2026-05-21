@@ -1380,11 +1380,12 @@ export class EdgeWorker extends EventEmitter {
 					)
 				: this.buildGitHubSystemPrompt(event, branchRef, taskInstructions);
 
-			// Build allowed tools and directories
-			// Exclude Slack MCP tools from GitHub sessions
-			const allowedTools = this.buildAllowedTools(repository).filter(
-				(t) => t !== "mcp__slack",
-			);
+			// Build allowed tools using the GitHub platform resolver, which honors
+			// `githubAllowedTools` on the workspace config and falls back to
+			// `GITHUB_DEFAULT_ALLOWED_TOOLS` (which intentionally omits
+			// `mcp__slack` — no subtractive filtering needed).
+			const allowedTools =
+				this.toolPermissionResolver.buildGithubAllowedTools(repository);
 			const disallowedTools = this.buildDisallowedTools(repository);
 			const allowedDirectories: string[] = [repository.repositoryPath];
 
@@ -2046,11 +2047,11 @@ ${taskSection}`;
 					)
 				: this.buildGitLabSystemPrompt(event, branchRef, taskInstructions);
 
-			// Build allowed tools and directories
-			// Exclude Slack MCP tools from GitLab sessions
-			const allowedTools = this.buildAllowedTools(repository).filter(
-				(t) => t !== "mcp__slack",
-			);
+			// Build allowed tools using the GitHub platform resolver — GitLab and
+			// GitHub share the same PR-targeted, single-repo intent, so they use
+			// the same `githubAllowedTools` knob and the same `GITHUB_*` default.
+			const allowedTools =
+				this.toolPermissionResolver.buildGithubAllowedTools(repository);
 			const disallowedTools = this.buildDisallowedTools(repository);
 			const allowedDirectories: string[] = [repository.repositoryPath];
 
