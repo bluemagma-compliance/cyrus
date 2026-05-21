@@ -42,6 +42,9 @@ export function createFetchFailureModesClient(
 						recap: input.recap,
 						userQuoteSnippet: input.userQuoteSnippet,
 						agentFailureSnippet: input.agentFailureSnippet,
+						...(input.sessionSource
+							? { sessionSource: input.sessionSource }
+							: {}),
 						...(input.sessionLogsUrl
 							? { sessionLogsUrl: input.sessionLogsUrl }
 							: {}),
@@ -65,12 +68,11 @@ export function createFetchFailureModesClient(
 					return { ok: false, status: res.status, error: errMsg };
 				}
 
-				const action = parsed?.action === "commented" ? "commented" : "created";
-				const linearIssueUrl =
-					typeof parsed?.linearIssueUrl === "string"
-						? (parsed.linearIssueUrl as string)
-						: "";
-				return { ok: true, action, linearIssueUrl };
+				const reportId =
+					typeof parsed?.reportId === "number"
+						? (parsed.reportId as number)
+						: null;
+				return { ok: true, reportId };
 			} catch (err) {
 				return {
 					ok: false,

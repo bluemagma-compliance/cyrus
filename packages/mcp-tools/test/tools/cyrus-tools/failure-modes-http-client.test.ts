@@ -8,8 +8,7 @@ describe("createFetchFailureModesClient", () => {
 				new Response(
 					JSON.stringify({
 						success: true,
-						action: "created",
-						linearIssueUrl: "https://linear.app/x/issue/Y-1",
+						reportId: 42,
 					}),
 					{ status: 200, headers: { "content-type": "application/json" } },
 				),
@@ -22,6 +21,7 @@ describe("createFetchFailureModesClient", () => {
 
 		const result = await client.postFailureMode({
 			sessionId: "sess-1",
+			sessionSource: "slack",
 			category: "x",
 			recap: "y",
 			userQuoteSnippet: "u",
@@ -36,11 +36,8 @@ describe("createFetchFailureModesClient", () => {
 		expect(init.headers["Content-Type"]).toBe("application/json");
 		const body = JSON.parse(init.body);
 		expect(body.sessionId).toBe("sess-1");
-		expect(result).toEqual({
-			ok: true,
-			action: "created",
-			linearIssueUrl: "https://linear.app/x/issue/Y-1",
-		});
+		expect(body.sessionSource).toBe("slack");
+		expect(result).toEqual({ ok: true, reportId: 42 });
 	});
 
 	it("maps non-2xx response to a structured error", async () => {
@@ -57,6 +54,7 @@ describe("createFetchFailureModesClient", () => {
 		});
 		const result = await client.postFailureMode({
 			sessionId: "s",
+			sessionSource: null,
 			category: "c",
 			recap: "r",
 			userQuoteSnippet: "u",
@@ -80,6 +78,7 @@ describe("createFetchFailureModesClient", () => {
 		});
 		const result = await client.postFailureMode({
 			sessionId: "s",
+			sessionSource: null,
 			category: "c",
 			recap: "r",
 			userQuoteSnippet: "u",

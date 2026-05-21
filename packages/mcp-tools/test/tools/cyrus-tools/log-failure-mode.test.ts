@@ -3,15 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FailureModesHttpClient } from "../../../src/tools/cyrus-tools/log-failure-mode.js";
 import { registerLogFailureModeTool } from "../../../src/tools/cyrus-tools/log-failure-mode.js";
 
-/**
- * The MCP SDK doesn't expose a public "invoke tool by name" helper, but
- * `server.registerTool` accepts a handler we can reach back to via the
- * server's internal request handler. For unit testing the failure-mode
- * tool's *logic* we just call the registered handler closure directly by
- * inspecting `_registeredTools`. This is a private API and may change in a
- * future MCP SDK release — the test is value-add over a pure type check
- * because it exercises the cwd→sessionId resolution + HTTP client paths.
- */
 function getHandler(server: McpServer, name: string) {
 	const tools = (
 		server as unknown as {
@@ -35,8 +26,7 @@ describe("log_failure_mode tool", () => {
 		httpClient = {
 			postFailureMode: vi.fn(async () => ({
 				ok: true,
-				action: "created",
-				linearIssueUrl: "https://linear.app/ceedar/issue/CYPACK-9999",
+				reportId: 7,
 			})),
 		};
 		resolveSessionFromCwd = vi.fn((cwd: string) =>
@@ -49,7 +39,7 @@ describe("log_failure_mode tool", () => {
 		});
 	});
 
-	it("resolves cwd → sessionId and posts to the http client", async () => {
+	it("resolves cwd → sessionId and POSTs the full payload", async () => {
 		const handler = getHandler(server, "log_failure_mode");
 		const result = await handler({
 			cwd: "/work/CYPACK-1",
@@ -61,6 +51,7 @@ describe("log_failure_mode tool", () => {
 
 		expect(httpClient.postFailureMode).toHaveBeenCalledWith({
 			sessionId: "session-abc",
+			sessionSource: "linear",
 			category: "screenshots-not-returned",
 			recap: "User asked for PR screenshots and none were posted.",
 			userQuoteSnippet: "where are the screenshots?",
@@ -70,9 +61,50 @@ describe("log_failure_mode tool", () => {
 
 		const payload = JSON.parse(result.content[0].text);
 		expect(payload.success).toBe(true);
-		expect(payload.action).toBe("created");
+		expect(payload.reportId).toBe(7);
 		expect(payload.sessionId).toBe("session-abc");
-		expect(payload.linearIssueUrl).toMatch(/CYPACK-9999/);
+	});
+
+	it("infers sessionSource from a `github-` prefix", async () => {
+		(resolveSessionFromCwd as ReturnType<typeof vi.fn>).mockImplementation(
+			() => "github-abc-123",
+		);
+		server = new McpServer({ name: "test", version: "0.0.0" });
+		registerLogFailureModeTool(server, {
+			resolveSessionFromCwd,
+			httpClient,
+		});
+		const handler = getHandler(server, "log_failure_mode");
+		await handler({
+			cwd: "/work/anywhere",
+			category: "x",
+			recap: "y",
+			user_quote_snippet: "z",
+			agent_failure_snippet: "q",
+		});
+		const callArg = (httpClient.postFailureMode as any).mock.calls[0][0];
+		expect(callArg.sessionSource).toBe("github");
+	});
+
+	it("infers sessionSource from a `slack-` prefix", async () => {
+		(resolveSessionFromCwd as ReturnType<typeof vi.fn>).mockImplementation(
+			() => "slack-T123-C456",
+		);
+		server = new McpServer({ name: "test", version: "0.0.0" });
+		registerLogFailureModeTool(server, {
+			resolveSessionFromCwd,
+			httpClient,
+		});
+		const handler = getHandler(server, "log_failure_mode");
+		await handler({
+			cwd: "/x",
+			category: "x",
+			recap: "y",
+			user_quote_snippet: "z",
+			agent_failure_snippet: "q",
+		});
+		const callArg = (httpClient.postFailureMode as any).mock.calls[0][0];
+		expect(callArg.sessionSource).toBe("slack");
 	});
 
 	it("falls back to fallbackSessionId when cwd doesn't resolve", async () => {

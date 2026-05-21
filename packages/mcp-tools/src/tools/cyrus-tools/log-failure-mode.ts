@@ -17,15 +17,29 @@ export type ResolveSessionFromCwd = (cwd: string) => string | null;
 export interface FailureModesHttpClient {
 	postFailureMode(input: {
 		sessionId: string;
+		sessionSource: string | null;
 		category: string;
 		recap: string;
 		userQuoteSnippet: string;
 		agentFailureSnippet: string;
 		sessionLogsUrl?: string;
 	}): Promise<
-		| { ok: true; action: "created" | "commented"; linearIssueUrl: string }
+		| { ok: true; reportId: number | null }
 		| { ok: false; status: number; error: string }
 	>;
+}
+
+/**
+ * Best-effort source classification from an internal session id. Linear,
+ * Slack, and GitHub all flow through the same MCP tool but each adapter
+ * stamps a recognizable prefix on the session id (`github-...`,
+ * `gitlab-...`); anything else is assumed to be a Linear-issue session.
+ */
+function inferSessionSource(sessionId: string): string {
+	if (sessionId.startsWith("github-")) return "github";
+	if (sessionId.startsWith("gitlab-")) return "gitlab";
+	if (sessionId.startsWith("slack-")) return "slack";
+	return "linear";
 }
 
 export interface LogFailureModeOptions {
@@ -110,6 +124,7 @@ export function registerLogFailureModeTool(
 
 			const result = await options.httpClient.postFailureMode({
 				sessionId,
+				sessionSource: inferSessionSource(sessionId),
 				category,
 				recap,
 				userQuoteSnippet: user_quote_snippet,
@@ -137,8 +152,7 @@ export function registerLogFailureModeTool(
 						type: "text" as const,
 						text: JSON.stringify({
 							success: true,
-							action: result.action,
-							linearIssueUrl: result.linearIssueUrl,
+							reportId: result.reportId,
 							sessionId,
 						}),
 					},
