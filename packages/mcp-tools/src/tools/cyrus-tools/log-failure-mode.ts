@@ -2,13 +2,46 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 /**
- * Resolver that maps a working directory (CWD) to a session id. Owned by
- * the harness (EdgeWorker), which is the only component with access to the
- * live session registry. The MCP tool depends on the abstract function
- * rather than EdgeWorker directly to keep the package free of harness
- * dependencies (DIP).
+ * Rich session context resolved from a working directory. The harness
+ * (EdgeWorker) is the only component with access to the live session
+ * registry; this interface lets the MCP tool ask for the bundle without
+ * depending on harness internals (DIP).
+ *
+ * Triage on the receiving end needs:
+ *   - `sessionId` — cyrus internal session UUID, used as the dedup key
+ *     server-side so repeated reports of the same failure on the same
+ *     session+category comment on the existing Linear ticket.
+ *   - `runnerSessionId` + `runnerType` — the underlying Claude / Gemini
+ *     / Codex / Cursor session id so a team member can fetch the
+ *     transcript that produced the failure.
+ *   - `linearAgentSessionId` — the Linear AgentSession id of the customer
+ *     conversation (distinct from the failure-modes ticket the server
+ *     opens). Lets triage jump to the live thread.
+ *   - `linearIssueIdentifier` + `linearIssueUrl` — the customer's
+ *     original issue (e.g. "ENG-76"), for click-through context.
+ *   - `workspacePath` — the agent's cwd, in case it differs from the
+ *     `cwd` the agent reported (e.g. shells in a subdir).
+ *   - `sessionSource` — "linear" / "slack" / "github" / "gitlab" /
+ *     null. The harness knows the adapter and stamps it here rather
+ *     than the tool guessing from a session-id prefix.
+ *
+ * Everything except `sessionId` is optional — older harnesses or CLI
+ * mode may not know all of these.
  */
-export type ResolveSessionFromCwd = (cwd: string) => string | null;
+export interface ResolvedSession {
+	sessionId: string;
+	runnerSessionId?: string | null;
+	runnerType?: "claude" | "gemini" | "codex" | "cursor" | null;
+	linearAgentSessionId?: string | null;
+	linearIssueIdentifier?: string | null;
+	linearIssueUrl?: string | null;
+	workspacePath?: string | null;
+	sessionSource?: string | null;
+}
+
+export type ResolveSessionFromCwd = (
+	cwd: string,
+) => ResolvedSession | string | null;
 
 /**
  * HTTP client interface for posting to cyrus-hosted. Tests can substitute
@@ -23,6 +56,12 @@ export interface FailureModesHttpClient {
 		userQuoteSnippet: string;
 		agentFailureSnippet: string;
 		sessionLogsUrl?: string;
+		runnerSessionId?: string | null;
+		runnerType?: string | null;
+		linearAgentSessionId?: string | null;
+		linearIssueIdentifier?: string | null;
+		linearIssueUrl?: string | null;
+		workspacePath?: string | null;
 	}): Promise<
 		| {
 				ok: true;
@@ -35,16 +74,27 @@ export interface FailureModesHttpClient {
 }
 
 /**
- * Best-effort source classification from an internal session id. Linear,
- * Slack, and GitHub all flow through the same MCP tool but each adapter
- * stamps a recognizable prefix on the session id (`github-...`,
- * `gitlab-...`); anything else is assumed to be a Linear-issue session.
+ * Best-effort source classification when the resolver only returns a bare
+ * session id (legacy harness shape). Linear, Slack, and GitHub stamp a
+ * recognizable prefix on the session id (`github-...`, `gitlab-...`);
+ * anything else is assumed to be a Linear-issue session.
  */
 function inferSessionSource(sessionId: string): string {
 	if (sessionId.startsWith("github-")) return "github";
 	if (sessionId.startsWith("gitlab-")) return "gitlab";
 	if (sessionId.startsWith("slack-")) return "slack";
 	return "linear";
+}
+
+function normalize(resolved: ResolvedSession | string): ResolvedSession {
+	if (typeof resolved === "string") {
+		return { sessionId: resolved, sessionSource: inferSessionSource(resolved) };
+	}
+	const out: ResolvedSession = { ...resolved };
+	if (!out.sessionSource) {
+		out.sessionSource = inferSessionSource(out.sessionId);
+	}
+	return out;
 }
 
 export interface LogFailureModeOptions {
@@ -113,9 +163,7 @@ export function registerLogFailureModeTool(
 			session_logs_url,
 		}) => {
 			const resolved = options.resolveSessionFromCwd(cwd);
-			const sessionId = resolved ?? options.fallbackSessionId ?? null;
-
-			if (!sessionId) {
+			if (!resolved && !options.fallbackSessionId) {
 				return {
 					content: [
 						{
@@ -129,14 +177,27 @@ export function registerLogFailureModeTool(
 				};
 			}
 
+			const ctx: ResolvedSession = resolved
+				? normalize(resolved)
+				: {
+						sessionId: options.fallbackSessionId!,
+						sessionSource: inferSessionSource(options.fallbackSessionId!),
+					};
+
 			const result = await options.httpClient.postFailureMode({
-				sessionId,
-				sessionSource: inferSessionSource(sessionId),
+				sessionId: ctx.sessionId,
+				sessionSource: ctx.sessionSource ?? null,
 				category,
 				recap,
 				userQuoteSnippet: user_quote_snippet ?? "<not captured>",
 				agentFailureSnippet: agent_failure_snippet ?? "<not captured>",
 				sessionLogsUrl: session_logs_url,
+				runnerSessionId: ctx.runnerSessionId ?? null,
+				runnerType: ctx.runnerType ?? null,
+				linearAgentSessionId: ctx.linearAgentSessionId ?? null,
+				linearIssueIdentifier: ctx.linearIssueIdentifier ?? null,
+				linearIssueUrl: ctx.linearIssueUrl ?? null,
+				workspacePath: ctx.workspacePath ?? cwd,
 			});
 
 			if (!result.ok) {
@@ -162,7 +223,7 @@ export function registerLogFailureModeTool(
 							reportId: result.reportId,
 							action: result.action,
 							linearIssueUrl: result.linearIssueUrl,
-							sessionId,
+							sessionId: ctx.sessionId,
 						}),
 					},
 				],

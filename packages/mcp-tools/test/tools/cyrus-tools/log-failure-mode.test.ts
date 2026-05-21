@@ -59,6 +59,12 @@ describe("log_failure_mode tool", () => {
 			userQuoteSnippet: "where are the screenshots?",
 			agentFailureSnippet: "PR opened: https://github.com/x/y/pull/1",
 			sessionLogsUrl: undefined,
+			runnerSessionId: null,
+			runnerType: null,
+			linearAgentSessionId: null,
+			linearIssueIdentifier: null,
+			linearIssueUrl: null,
+			workspacePath: "/work/CYPACK-1",
 		});
 
 		const payload = JSON.parse(result.content[0].text);
@@ -109,6 +115,38 @@ describe("log_failure_mode tool", () => {
 		});
 		const callArg = (httpClient.postFailureMode as any).mock.calls[0][0];
 		expect(callArg.sessionSource).toBe("slack");
+	});
+
+	it("forwards the rich resolved-session bundle to the HTTP client", async () => {
+		// Resolver returns the rich ResolvedSession shape (new contract).
+		(resolveSessionFromCwd as ReturnType<typeof vi.fn>).mockImplementation(
+			() => ({
+				sessionId: "cyrus-internal-abc",
+				runnerSessionId: "claude-9f87",
+				runnerType: "claude" as const,
+				linearAgentSessionId: "agent-sess-zzz",
+				linearIssueIdentifier: "ENG-76",
+				linearIssueUrl: null,
+				workspacePath: "/home/payton/.cyrus/worktrees/ENG-76",
+				sessionSource: "linear",
+			}),
+		);
+		const handler = getHandler(server, "log_failure_mode");
+		await handler({
+			cwd: "/home/payton/.cyrus/worktrees/ENG-76",
+			category: "nvidia-smi-not-available",
+			recap: "Asked for nvidia-smi; not installed.",
+			user_quote_snippet: "you should be able to run that",
+			agent_failure_snippet:
+				"$ nvidia-smi\nbash: nvidia-smi: command not found",
+		});
+		const callArg = (httpClient.postFailureMode as any).mock.calls[0][0];
+		expect(callArg.sessionId).toBe("cyrus-internal-abc");
+		expect(callArg.runnerSessionId).toBe("claude-9f87");
+		expect(callArg.runnerType).toBe("claude");
+		expect(callArg.linearAgentSessionId).toBe("agent-sess-zzz");
+		expect(callArg.linearIssueIdentifier).toBe("ENG-76");
+		expect(callArg.workspacePath).toBe("/home/payton/.cyrus/worktrees/ENG-76");
 	});
 
 	it("substitutes '<not captured>' when the snippet fields are omitted", async () => {

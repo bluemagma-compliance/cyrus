@@ -132,6 +132,7 @@ import {
 	createCyrusToolsServer,
 	createFetchFailureModesClient,
 	type FailureModesHttpClient,
+	type ResolvedSession,
 } from "cyrus-mcp-tools";
 import {
 	SlackEventTransport,
@@ -5572,33 +5573,87 @@ ${taskSection}`;
 	 * agent's reported `cwd`. We normalize and compare against each known
 	 * session's `workspace.path` (and any sub-repo paths the session opens).
 	 */
-	private resolveSessionFromCwd(cwd: string): string | null {
+	/**
+	 * Resolve a working-directory string to the rich session bundle a
+	 * Cyrus team member needs to triage a failure-mode report: the
+	 * internal session id (for dedup), the runner session id + runner
+	 * type (so triage can pull the Claude/Gemini/Codex/Cursor transcript),
+	 * the Linear AgentSession + source-issue identifiers (so triage can
+	 * jump to the customer thread), and the workspace path (for repro).
+	 *
+	 * Returns null only when no session matches. We prefer an exact
+	 * workspace-path or sub-repo-path match; if neither hits, we fall
+	 * back to a prefix match for nested cwds (e.g. shells in a subdir).
+	 */
+	private resolveSessionFromCwd(cwd: string): ResolvedSession | null {
 		if (!cwd) return null;
 		const normalize = (p: string) => p.replace(/\/+$/, "");
 		const target = normalize(cwd);
 
 		const sessions = this.agentSessionManager.getAllSessions();
-		for (const session of sessions) {
-			if (normalize(session.workspace?.path ?? "") === target) {
-				return session.id;
-			}
+
+		const exact = sessions.find((session) => {
+			if (normalize(session.workspace?.path ?? "") === target) return true;
 			const repoPaths = session.workspace?.repoPaths;
 			if (repoPaths) {
 				for (const p of Object.values(repoPaths)) {
-					if (typeof p === "string" && normalize(p) === target) {
-						return session.id;
-					}
+					if (typeof p === "string" && normalize(p) === target) return true;
 				}
 			}
-		}
-		// Best-effort prefix match for nested cwd within a session workspace.
-		for (const session of sessions) {
-			const root = normalize(session.workspace?.path ?? "");
-			if (root && target.startsWith(`${root}/`)) {
-				return session.id;
-			}
-		}
-		return null;
+			return false;
+		});
+
+		const prefix = exact
+			? undefined
+			: sessions.find((session) => {
+					const root = normalize(session.workspace?.path ?? "");
+					return root && target.startsWith(`${root}/`);
+				});
+
+		const session = exact ?? prefix;
+		if (!session) return null;
+
+		const runnerType = session.claudeSessionId
+			? "claude"
+			: session.geminiSessionId
+				? "gemini"
+				: session.codexSessionId
+					? "codex"
+					: session.cursorSessionId
+						? "cursor"
+						: null;
+		const runnerSessionId =
+			session.claudeSessionId ??
+			session.geminiSessionId ??
+			session.codexSessionId ??
+			session.cursorSessionId ??
+			null;
+
+		const sessionSource = session.id.startsWith("github-")
+			? "github"
+			: session.id.startsWith("gitlab-")
+				? "gitlab"
+				: session.id.startsWith("slack-")
+					? "slack"
+					: (session.issueContext?.trackerId ?? "linear");
+
+		return {
+			sessionId: session.id,
+			runnerSessionId,
+			runnerType,
+			linearAgentSessionId: session.externalSessionId ?? null,
+			linearIssueIdentifier:
+				session.issueContext?.issueIdentifier ??
+				session.issue?.identifier ??
+				null,
+			// IssueMinimal carries `identifier` but not `url`; the server-side
+			// failure-modes service builds a click-through link from the
+			// identifier + the team's stored Linear workspace slug. Leaving
+			// `linearIssueUrl` null here keeps the harness platform-agnostic.
+			linearIssueUrl: null,
+			workspacePath: session.workspace?.path ?? null,
+			sessionSource,
+		};
 	}
 
 	private createCyrusToolsOptions(parentSessionId?: string): CyrusToolsOptions {

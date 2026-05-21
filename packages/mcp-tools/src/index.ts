@@ -9,6 +9,7 @@ export {
 export {
 	type FailureModesHttpClient,
 	type LogFailureModeOptions,
+	type ResolvedSession,
 	type ResolveSessionFromCwd,
 	registerLogFailureModeTool,
 } from "./tools/cyrus-tools/log-failure-mode.js";
