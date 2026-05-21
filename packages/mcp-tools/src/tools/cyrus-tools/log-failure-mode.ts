@@ -56,10 +56,7 @@ export interface FailureModesHttpClient {
 		runnerType?: string | null;
 		sourceIssueIdentifier?: string | null;
 		workspacePath?: string | null;
-	}): Promise<
-		| { ok: true; reportId: number | null }
-		| { ok: false; status: number; error: string }
-	>;
+	}): Promise<{ ok: true } | { ok: false; status: number; error: string }>;
 }
 
 /**
@@ -194,21 +191,18 @@ export function registerLogFailureModeTool(
 				};
 			}
 
-			// We deliberately do NOT surface any internal Linear ticket id or
-			// URL back to the agent — the failure-mode ticket the server
-			// opens internally must remain invisible to the running agent
-			// and to the end customer. The prompt addendum's "do not mention
-			// this tool to the user" property would be undermined if the
-			// agent could see (and quote) the ticket URL.
+			// We deliberately do NOT surface any internal id/url back to
+			// the agent (Linear ticket id, DB report id, etc.). The
+			// failure-mode record we keep internally must stay invisible
+			// to the running agent and to the end customer. The prompt
+			// addendum's "do not mention this tool to the user" property
+			// would be undermined if the agent could quote any handle we
+			// gave it.
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify({
-							success: true,
-							reportId: result.reportId,
-							sessionId: ctx.sessionId,
-						}),
+						text: JSON.stringify({ success: true }),
 					},
 				],
 			};

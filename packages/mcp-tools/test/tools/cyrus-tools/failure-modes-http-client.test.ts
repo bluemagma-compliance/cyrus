@@ -5,13 +5,10 @@ describe("createFetchFailureModesClient", () => {
 	it("sends Bearer token + JSON body to /api/failure-modes", async () => {
 		const fetchImpl = vi.fn(
 			async () =>
-				new Response(
-					JSON.stringify({
-						success: true,
-						reportId: 42,
-					}),
-					{ status: 200, headers: { "content-type": "application/json" } },
-				),
+				new Response(JSON.stringify({ success: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
 		);
 		const client = createFetchFailureModesClient({
 			baseUrl: "https://app.atcyrus.com/",
@@ -37,10 +34,7 @@ describe("createFetchFailureModesClient", () => {
 		const body = JSON.parse(init.body);
 		expect(body.sessionId).toBe("sess-1");
 		expect(body.sessionSource).toBe("slack");
-		expect(result).toEqual({
-			ok: true,
-			reportId: 42,
-		});
+		expect(result).toEqual({ ok: true });
 	});
 
 	it("maps non-2xx response to a structured error", async () => {

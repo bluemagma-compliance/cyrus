@@ -24,10 +24,7 @@ describe("log_failure_mode tool", () => {
 
 	beforeEach(() => {
 		httpClient = {
-			postFailureMode: vi.fn(async () => ({
-				ok: true,
-				reportId: 7,
-			})),
+			postFailureMode: vi.fn(async () => ({ ok: true })),
 		};
 		resolveSessionFromCwd = vi.fn((cwd: string) =>
 			cwd === "/work/CYPACK-1" ? "session-abc" : null,
@@ -63,15 +60,11 @@ describe("log_failure_mode tool", () => {
 		});
 
 		const payload = JSON.parse(result.content[0].text);
-		expect(payload.success).toBe(true);
-		expect(payload.reportId).toBe(7);
-		expect(payload.sessionId).toBe("session-abc");
-		// Linear issue id/url MUST NOT be surfaced back to the agent — the
-		// internal failure-mode ticket has to remain invisible to the
-		// running session and to the end customer.
-		expect(payload.linearIssueUrl).toBeUndefined();
-		expect(payload.linearIssueId).toBeUndefined();
-		expect(payload.action).toBeUndefined();
+		// The tool returns ONLY {success: true}. No internal id (Linear
+		// ticket id/url, DB report id, or even the cyrus session id) is
+		// surfaced back to the agent — the failure-mode record has to
+		// remain invisible to the running session and to the end customer.
+		expect(payload).toEqual({ success: true });
 	});
 
 	it("infers sessionSource from a `github-` prefix", async () => {

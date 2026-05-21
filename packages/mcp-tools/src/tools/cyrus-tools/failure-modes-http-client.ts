@@ -75,11 +75,9 @@ export function createFetchFailureModesClient(
 					return { ok: false, status: res.status, error: errMsg };
 				}
 
-				const reportId =
-					typeof parsed?.reportId === "number"
-						? (parsed.reportId as number)
-						: null;
-				return { ok: true, reportId };
+				// Server intentionally returns no body identifiers — see
+				// log-failure-mode.ts. We just acknowledge the 2xx.
+				return { ok: true };
 			} catch (err) {
 				return {
 					ok: false,
