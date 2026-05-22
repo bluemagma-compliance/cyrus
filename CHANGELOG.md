@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **`EdgeConfig.defaultAllowedTools` renamed to `linearAllowedTools`.** Reflects what it actually controls (Linear-triggered sessions specifically, not a global default). The legacy field is still accepted on parse and migrated forward so older self-host configs keep working. ([CYHOST-967](https://linear.app/ceedar/issue/CYHOST-967))
 
 ### Fixed
+- **`slackAllowedTools`, `githubAllowedTools`, and the per-platform MCP config keys (`slackMcpConfigs`, `linearMcpConfigs`, `githubMcpConfigs`) are now honored after config hot-reload.** `ConfigManager.loadConfigSafely()` previously merged a hardcoded whitelist of fields from the parsed `config.json` and silently dropped every per-platform allow-list / MCP config key, so Slack and GitHub sessions kept resolving to the cyrus-core defaults even when the workspace had a tighter override on disk. The merge and the change-detection list now include all six platform keys. ([CYHOST-967](https://linear.app/ceedar/issue/CYHOST-967))
 - **Self-Managed GitLab MR replies** — `EdgeWorker` was instantiating `GitLabCommentService` with no `apiBaseUrl`, so every MR-reply request on a Self-Managed instance hit `gitlab.com` and 404'd. The base URL is now derived from the URL origin of the first configured repo with a `gitlabUrl`, so MR replies post against the correct host. Thanks [@tenforty](https://github.com/tenfourty) ([#1191](https://github.com/cyrusagents/cyrus/pull/1191))
 
 ### Security
