@@ -38,7 +38,7 @@ Construct the manifest, substituting `<AGENT_NAME>`, `<AGENT_DESCRIPTION>`, and 
 
 **IMPORTANT: Use the manifest template EXACTLY as shown below.** The event subscription path MUST be `/slack-webhook` (not `/slack/events` or any other path). This matches the route registered by `SlackEventTransport` in the Cyrus codebase.
 
-**NOTE: this list of 'scopes' must be kept in sync with the list of scopes in the skill defined at: [https://github.com/cyrusagents/cyrus/blob/main/skills/cyrus-setup-slack/SKILL.md](https://github.com/cyrusagents/cyrus-hosted/blob/main/.claude/skills/preview-init/SKILL.md) , as well as the list of scopes defined at [https://github.com/cyrusagents/cyrus-hosted/blob/main/apps/app/src/lib/slack/constants.ts](https://github.com/cyrusagents/cyrus-hosted/blob/main/apps/app/src/lib/slack/constants.ts). If you change here you must also propose changes in those locations.**
+**NOTE: this list of 'scopes' must be kept in sync with the list of scopes in the skill defined at: [https://github.com/cyrusagents/cyrus-hosted/blob/main/.claude/skills/preview-init/SKILL.md](https://github.com/cyrusagents/cyrus-hosted/blob/main/.claude/skills/preview-init/SKILL.md) , as well as the list of scopes defined at [https://github.com/cyrusagents/cyrus-hosted/blob/main/apps/app/src/lib/slack/constants.ts](https://github.com/cyrusagents/cyrus-hosted/blob/main/apps/app/src/lib/slack/constants.ts). If you change here you must also propose changes in those locations.**
 
 ```json
 {
