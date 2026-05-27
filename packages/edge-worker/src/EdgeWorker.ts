@@ -4439,6 +4439,8 @@ ${taskSection}`;
 					undefined, // maxTurns
 					linearWorkspaceId,
 					this.buildSkillSessionContext(primaryRepo, fullIssue),
+					"linear",
+					repositories.map((repo) => repo.repositoryPath),
 				);
 
 			log.debug(
@@ -6288,6 +6290,13 @@ ${input.userComment}
 		 * Defaults to `"linear"` (the pre-platform-aware behavior).
 		 */
 		sessionPlatform: "linear" | "github" | "gitlab" = "linear",
+		/**
+		 * All repository paths this session can operate on (multi-repo). Used to
+		 * allowlist each repo's encoded Claude Code auto-memory directory
+		 * (`~/.claude/projects/<encoded-path>/memory`). When omitted, only the
+		 * primary session cwd's memory dir is allowlisted. See CYPACK-1253.
+		 */
+		repositoryPaths?: string[],
 	): Promise<{ config: AgentRunnerConfig; runnerType: RunnerType }> {
 		const log = this.logger.withContext({
 			sessionId,
@@ -6319,6 +6328,7 @@ ${input.userComment}
 			labels,
 			issueDescription,
 			maxTurns,
+			repositoryPaths,
 			// Per-platform MCP config paths — GitHub + GitLab share the
 			// `githubMcpConfigs` knob (single-repo PR contexts both); Linear
 			// gets `linearMcpConfigs`. Not a blanket override: the builder
