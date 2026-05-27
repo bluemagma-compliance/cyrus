@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import type {
 	HookCallbackMatcher,
@@ -17,7 +18,9 @@ import type {
 	RepositoryConfig,
 	RunnerType,
 } from "cyrus-core";
+import { buildIntentToAddHook } from "./hooks/IntentToAddHook.js";
 import { buildPrMarkerHook } from "./hooks/PrMarkerHook.js";
+import { appendFailureModeAddendum } from "./prompts/failureModePromptAddendum.js";
 
 /**
  * Subset of McpConfigService consumed by RunnerConfigBuilder.
@@ -27,7 +30,6 @@ export interface IMcpConfigProvider {
 		repoId: string,
 		linearWorkspaceId: string,
 		parentSessionId?: string,
-		options?: { excludeSlackMcp?: boolean },
 	): Record<string, McpServerConfig>;
 	buildMergedMcpConfigPath(
 		repositories: RepositoryConfig | RepositoryConfig[],
@@ -74,10 +76,22 @@ export interface ChatRunnerConfigInput {
 	platformName: string;
 	/** Linear workspace ID for building fresh MCP config at session start */
 	linearWorkspaceId?: string;
-	/** Repository to source user-configured MCP paths from (V1: first available repo) */
+	/** Repository whose MCP runtime servers (Linear MCP, Cyrus tools, etc.) get
+	 * spun up for this chat session — chat sessions are repo-agnostic at the
+	 * session level, so this just picks one repo to seed those native servers. */
 	repository?: RepositoryConfig;
 	/** Repository paths the chat session can read */
 	repositoryPaths?: string[];
+	/**
+	 * Filesystem paths to custom-integration `.mcp.json` files to load for
+	 * this chat session (sourced from `EdgeWorkerConfig.slackMcpConfigs` for
+	 * Slack). Chat sessions are repo-agnostic, so `repository.mcpConfigPath`
+	 * is not consulted here — only this list determines which custom MCP
+	 * files the session loads. When empty/omitted, no custom `.mcp.json`
+	 * files are loaded (native servers built via `mcpConfigProvider` still
+	 * run as usual).
+	 */
+	platformMcpConfigOverrides?: readonly string[];
 	logger: ILogger;
 	onMessage: (message: SDKMessage) => void | Promise<void>;
 	onError: (error: Error) => void;
@@ -98,7 +112,17 @@ export interface IssueRunnerConfigInput {
 	labels?: string[];
 	issueDescription?: string;
 	maxTurns?: number;
-	mcpOptions?: { excludeSlackMcp?: boolean };
+	/**
+	 * Filesystem paths to custom-integration `.mcp.json` files for this
+	 * issue session: `EdgeWorkerConfig.linearMcpConfigs` for Linear, or
+	 * `githubMcpConfigs` for GitHub/GitLab. The list is NOT a blanket
+	 * override — it's only consulted when the routed repo does NOT have its
+	 * own `allowedTools` override. If the repo has its own allow-list set,
+	 * the agent uses `repository.mcpConfigPath` instead so the repo's
+	 * permission rules and its server set always come from the same scope
+	 * (see `buildIssueConfig`).
+	 */
+	platformMcpConfigOverrides?: readonly string[];
 	linearWorkspaceId?: string;
 	cyrusHome: string;
 	logger: ILogger;
@@ -154,10 +178,20 @@ export class RunnerConfigBuilder {
 	 * config without hooks or model selection.
 	 */
 	buildChatConfig(input: ChatRunnerConfigInput): AgentRunnerConfig {
-		// Derive user-configured MCP config path from the repository
-		const mcpConfigPath = input.repository
-			? this.mcpConfigProvider.buildMergedMcpConfigPath(input.repository)
-			: undefined;
+		// MCP config paths for chat sessions come exclusively from the
+		// platform override list (e.g. `slackMcpConfigs`). Chat sessions
+		// are repo-agnostic at the session level — we do NOT fall back to
+		// "first repo wins" `repository.mcpConfigPath` (the prior V1
+		// default), because that arbitrarily privileged whichever repo
+		// loaded first. When the platform list is empty, the chat
+		// session simply loads no per-repo `.mcp.json` files.
+		const mcpConfigPath =
+			input.platformMcpConfigOverrides &&
+			input.platformMcpConfigOverrides.length > 0
+				? input.platformMcpConfigOverrides.length === 1
+					? input.platformMcpConfigOverrides[0]
+					: [...input.platformMcpConfigOverrides]
+				: undefined;
 
 		// Build fresh MCP config at session start (reads current token from config)
 		// This follows the same pattern as buildIssueConfig — never use a pre-baked config
@@ -207,7 +241,7 @@ export class RunnerConfigBuilder {
 			workspaceName: input.workspaceName,
 			cyrusHome: input.cyrusHome,
 			autoMemoryDirectory,
-			appendSystemPrompt: input.systemPrompt,
+			appendSystemPrompt: appendFailureModeAddendum(input.systemPrompt),
 			...(mcpConfig ? { mcpConfig } : {}),
 			...(mcpConfigPath ? { mcpConfigPath } : {}),
 			...(input.resumeSessionId
@@ -236,12 +270,14 @@ export class RunnerConfigBuilder {
 		// plus the Stop hook that blocks the session when work is unshipped.
 		const screenshotHooks = this.buildScreenshotHooks(log);
 		const prMarkerHook = buildPrMarkerHook(log);
+		const intentToAddHook = buildIntentToAddHook(log);
 		const stopHook = this.buildStopHook(log);
 		const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
 			...stopHook,
 			PostToolUse: [
 				...(screenshotHooks.PostToolUse ?? []),
 				...(prMarkerHook.PostToolUse ?? []),
+				...(intentToAddHook.PostToolUse ?? []),
 			],
 		};
 
@@ -295,11 +331,28 @@ export class RunnerConfigBuilder {
 			input.repository.id,
 			resolvedWorkspaceId,
 			input.sessionId,
-			input.mcpOptions,
 		);
-		const mcpConfigPath = this.mcpConfigProvider.buildMergedMcpConfigPath(
-			input.repository,
-		);
+		// Repo-override vs platform-default resolution for MCP config paths:
+		//   - If the routed repo has its own `allowedTools` override, it
+		//     also owns its own MCP config — use `repository.mcpConfigPath`
+		//     so the repo-scoped allow-list lines up with the repo-scoped
+		//     server set. The two travel as a unit.
+		//   - Otherwise the repo inherits the platform's allow-list, and
+		//     should likewise inherit the platform's MCP config list
+		//     (`linearMcpConfigs` / `githubMcpConfigs`).
+		// This guarantees the agent's permission rules and the loaded MCP
+		// server set always come from the same scope.
+		const repoHasAllowedToolsOverride =
+			Array.isArray(input.repository.allowedTools) &&
+			input.repository.allowedTools.length > 0;
+		const mcpConfigPath = repoHasAllowedToolsOverride
+			? this.mcpConfigProvider.buildMergedMcpConfigPath(input.repository)
+			: input.platformMcpConfigOverrides &&
+					input.platformMcpConfigOverrides.length > 0
+				? input.platformMcpConfigOverrides.length === 1
+					? input.platformMcpConfigOverrides[0]
+					: [...input.platformMcpConfigOverrides]
+				: undefined;
 
 		const config: AgentRunnerConfig & Record<string, unknown> = {
 			workingDirectory: input.session.workspace.path,
@@ -310,7 +363,7 @@ export class RunnerConfigBuilder {
 			cyrusHome: input.cyrusHome,
 			mcpConfigPath,
 			mcpConfig,
-			appendSystemPrompt: input.systemPrompt || "",
+			appendSystemPrompt: appendFailureModeAddendum(input.systemPrompt),
 			// Priority order: label override > repository config > global default
 			model: finalModel,
 			fallbackModel:
@@ -333,8 +386,6 @@ export class RunnerConfigBuilder {
 			...(runnerType === "claude" &&
 				input.sandboxSettings &&
 				this.buildSandboxConfig(input)),
-			// Enable Chrome integration for Claude runner (disabled for other runners)
-			...(runnerType === "claude" && { extraArgs: { chrome: null } }),
 			// AskUserQuestion callback - only for Claude runner
 			...(runnerType === "claude" &&
 				input.createAskUserQuestionCallback && {
@@ -382,9 +433,9 @@ export class RunnerConfigBuilder {
 	 * once the hook has already fired, the next stop is always allowed through.
 	 */
 	private buildStopHook(
-		_log: ILogger,
+		log: ILogger,
 	): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
-		return buildStopHook();
+		return buildStopHook(log);
 	}
 
 	/**
@@ -477,49 +528,6 @@ export class RunnerConfigBuilder {
 					],
 				},
 				{
-					matcher: "mcp__claude-in-chrome__computer",
-					hooks: [
-						async (input, _toolUseID, { signal: _signal }) => {
-							const postToolUseInput = input as PostToolUseHookInput;
-							const response = postToolUseInput.tool_response as {
-								action?: string;
-								imageId?: string;
-								path?: string;
-							};
-							// Only provide upload guidance for screenshot actions
-							if (response?.action === "screenshot") {
-								const filePath = response?.path || "the screenshot file";
-								return {
-									continue: true,
-									additionalContext: `Screenshot captured. To share this screenshot in Linear comments, use the linear_upload_file tool to upload ${filePath}. This will return an asset URL that can be embedded in markdown.`,
-								};
-							}
-							return { continue: true };
-						},
-					],
-				},
-				{
-					matcher: "mcp__claude-in-chrome__gif_creator",
-					hooks: [
-						async (input, _toolUseID, { signal: _signal }) => {
-							const postToolUseInput = input as PostToolUseHookInput;
-							const response = postToolUseInput.tool_response as {
-								action?: string;
-								path?: string;
-							};
-							// Only provide upload guidance for export actions
-							if (response?.action === "export") {
-								const filePath = response?.path || "the exported GIF";
-								return {
-									continue: true,
-									additionalContext: `GIF exported successfully. To share this GIF in Linear comments, use the linear_upload_file tool to upload ${filePath}. This will return an asset URL that can be embedded in markdown.`,
-								};
-							}
-							return { continue: true };
-						},
-					],
-				},
-				{
 					matcher: "mcp__chrome-devtools__take_screenshot",
 					hooks: [
 						async (input, _toolUseID, { signal: _signal }) => {
@@ -542,15 +550,20 @@ export class RunnerConfigBuilder {
 }
 
 /**
- * Build a Stop hook that reminds the agent to commit, push, and open a PR
- * before ending the session. Blocks the first stop attempt and feeds the
- * guidance back to the agent via the SDK's native `decision: "block"` +
- * `reason` mechanism. The `stop_hook_active` flag prevents infinite loops —
- * once the hook has already fired, the next stop is always allowed through.
+ * Build a Stop hook that ensures the agent ships work before ending the
+ * session. Inspects the working tree at the session cwd and blocks the first
+ * stop attempt when there are uncommitted tracked changes or commits ahead
+ * of the upstream branch. The `stop_hook_active` flag prevents infinite
+ * loops — once the hook has fired, the next stop is allowed through.
+ *
+ * Pre-existing untracked files (local scratch files, env files, IDE
+ * artifacts outside `.gitignore`) do not trigger the guardrail; new files
+ * the agent writes are marked via `IntentToAddHook` so they still appear as
+ * a tracked diff and re-trigger the block when forgotten. See CYPACK-1196.
  */
-export function buildStopHook(): Partial<
-	Record<HookEvent, HookCallbackMatcher[]>
-> {
+export function buildStopHook(
+	log: ILogger,
+): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
 	return {
 		Stop: [
 			{
@@ -564,16 +577,97 @@ export function buildStopHook(): Partial<
 							return {};
 						}
 
+						const guardrail = inspectGitGuardrail(stopInput.cwd, log);
+						if (!guardrail) {
+							return {};
+						}
+
 						return {
 							decision: "block",
-							reason:
-								"Before stopping, ensure you have committed and pushed all code changes " +
-								"and created/updated a PR (if you made any code changes).\n\n" +
-								"If you have already done this (or no code changes were made), you may stop again.",
+							reason: guardrail,
 						};
 					},
 				],
 			},
 		],
 	};
+}
+
+/**
+ * Inspect the working tree at `cwd` and return a guardrail message if there
+ * is unshipped work (uncommitted tracked changes or commits ahead of the
+ * upstream). Returns null when the tree is clean, when `cwd` isn't a git
+ * repo, or when git is unavailable — in those cases the stop is not blocked.
+ *
+ * Uses `--untracked-files=no` so that pre-existing untracked files in the
+ * customer's worktree (scratch files, local env files, IDE artifacts) do not
+ * wedge the session. Files Cyrus creates via Write/Edit are marked with
+ * `git add --intent-to-add` by `IntentToAddHook` so they still show as a
+ * tracked diff and block the stop when left uncommitted.
+ */
+export function inspectGitGuardrail(cwd: string, log: ILogger): string | null {
+	const runGit = (args: string): string => {
+		return execSync(`git ${args}`, {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+	};
+
+	let status: string;
+	try {
+		status = runGit("status --porcelain --untracked-files=no");
+	} catch (err) {
+		log.debug(
+			`PR guardrail: skipping (cwd is not a git repo or git failed): ${(err as Error).message}`,
+		);
+		return null;
+	}
+
+	const uncommittedFiles = status
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+	const hasUncommitted = uncommittedFiles.length > 0;
+
+	let unpushedCount = 0;
+	try {
+		unpushedCount = parseInt(runGit("rev-list --count @{u}..HEAD"), 10) || 0;
+	} catch {
+		// No upstream configured — fall back to comparing against origin's default branch.
+		try {
+			const baseRef = runGit("rev-parse --verify --abbrev-ref origin/HEAD");
+			if (baseRef) {
+				unpushedCount =
+					parseInt(runGit(`rev-list --count ${baseRef}..HEAD`), 10) || 0;
+			}
+		} catch {
+			// Can't determine a base — be conservative and don't block on commits alone.
+		}
+	}
+
+	if (!hasUncommitted && unpushedCount === 0) {
+		return null;
+	}
+
+	const parts: string[] = [];
+	if (hasUncommitted) {
+		parts.push(
+			`${uncommittedFiles.length} uncommitted file change${uncommittedFiles.length === 1 ? "" : "s"}`,
+		);
+	}
+	if (unpushedCount > 0) {
+		parts.push(
+			`${unpushedCount} commit${unpushedCount === 1 ? "" : "s"} not yet on the remote`,
+		);
+	}
+
+	return (
+		`You appear to be ending the session, but the working tree has ${parts.join(" and ")}. ` +
+		"Before stopping:\n" +
+		"1. Commit any uncommitted changes with a descriptive message.\n" +
+		"2. Push the branch to the remote.\n" +
+		"3. Create or update a pull request that summarizes the change.\n\n" +
+		"If the work is genuinely complete and a PR is not appropriate (for example, a question or research task with no intended code changes), you may stop again — this guardrail only blocks once per session."
+	);
 }

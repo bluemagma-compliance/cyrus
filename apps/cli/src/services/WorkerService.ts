@@ -194,10 +194,18 @@ export class WorkerService {
 			version: this.version,
 			repositories,
 			cyrusHome: this.cyrusHome,
-			defaultAllowedTools:
-				process.env.ALLOWED_TOOLS?.split(",").map((t) => t.trim()) || [],
+			linearAllowedTools:
+				process.env.LINEAR_ALLOWED_TOOLS?.split(",").map((t) => t.trim()) ||
+				edgeConfig.linearAllowedTools ||
+				[],
+			slackAllowedTools: edgeConfig.slackAllowedTools,
+			githubAllowedTools: edgeConfig.githubAllowedTools,
+			slackMcpConfigs: edgeConfig.slackMcpConfigs,
+			linearMcpConfigs: edgeConfig.linearMcpConfigs,
+			githubMcpConfigs: edgeConfig.githubMcpConfigs,
 			defaultDisallowedTools:
 				process.env.DISALLOWED_TOOLS?.split(",").map((t) => t.trim()) ||
+				edgeConfig.defaultDisallowedTools ||
 				undefined,
 			// Model configuration: environment variables take precedence over config file.
 			// Legacy env vars/keys are still accepted for backwards compatibility.

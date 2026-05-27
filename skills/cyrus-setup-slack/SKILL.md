@@ -38,6 +38,8 @@ Construct the manifest, substituting `<AGENT_NAME>`, `<AGENT_DESCRIPTION>`, and 
 
 **IMPORTANT: Use the manifest template EXACTLY as shown below.** The event subscription path MUST be `/slack-webhook` (not `/slack/events` or any other path). This matches the route registered by `SlackEventTransport` in the Cyrus codebase.
 
+**NOTE: this list of 'scopes' must be kept in sync with the list of scopes in the skill defined at: [https://github.com/cyrusagents/cyrus-hosted/blob/main/.claude/skills/preview-init/SKILL.md](https://github.com/cyrusagents/cyrus-hosted/blob/main/.claude/skills/preview-init/SKILL.md) , as well as the list of scopes defined at [https://github.com/cyrusagents/cyrus-hosted/blob/main/apps/app/src/lib/slack/constants.ts](https://github.com/cyrusagents/cyrus-hosted/blob/main/apps/app/src/lib/slack/constants.ts). If you change here you must also propose changes in those locations.**
+
 ```json
 {
     "display_information": {
@@ -48,7 +50,7 @@ Construct the manifest, substituting `<AGENT_NAME>`, `<AGENT_DESCRIPTION>`, and 
     "features": {
         "bot_user": {
             "display_name": "<AGENT_NAME>",
-            "always_online": false
+            "always_online": true
         }
     },
     "oauth_config": {
@@ -85,6 +87,9 @@ Construct the manifest, substituting `<AGENT_NAME>`, `<AGENT_DESCRIPTION>`, and 
                 "chat:write.customize",
                 "groups:history",
                 "im:history",
+                "im:read",
+                "files:read",
+                "files:write",
                 "mpim:history",
                 "reactions:write",
                 "search:read.files",
