@@ -1274,7 +1274,7 @@ export class EdgeWorker extends EventEmitter {
 
 					const fix = isManagedCustomer
 						? `**What to do:** there's currently no self-serve way to update the stored repository URL on your plan — please reach out to Cyrus support and reference \`${repoFullName}\` and we'll reconcile it on the backend.`
-						: `**What to do:** open \`~/.cyrus/config.json\` on the worker and update the \`githubUrl\` of the relevant repository to \`https://github.com/${repoFullName}\`, then restart the worker. If this repo shouldn't be sending events to Cyrus at all, remove the GitHub App from it instead.`;
+						: `**What to do:** open \`~/.cyrus/config.json\` on the worker and update the \`githubUrl\` of the relevant repository to \`https://github.com/${repoFullName}\`. The worker watches the config file and will pick up the change automatically. If this repo shouldn't be sending events to Cyrus at all, remove the GitHub App from it instead.`;
 
 					this.gitHubCommentService
 						.postIssueComment({
