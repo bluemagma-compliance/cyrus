@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Updated `@anthropic-ai/claude-agent-sdk` to `0.3.153` and `@anthropic-ai/sdk` to `^0.99.0`; removes deprecated `RemoteTrigger` tool from the allowed-tool defaults for Linear and GitHub sessions. See the [claude-agent-sdk changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md) for full details. ([CYPACK-1255](https://linear.app/ceedar/issue/CYPACK-1255), [#1262](https://github.com/cyrusagents/cyrus/pull/1262))
+
 ## [0.2.58] - 2026-05-26
 
 ### Added
