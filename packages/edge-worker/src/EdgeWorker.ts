@@ -1257,24 +1257,32 @@ export class EdgeWorker extends EventEmitter {
 				const shouldReply = wasMentioned || isPullRequestReview;
 
 				if (shouldReply && reactionToken && prNumber) {
+					// Presence of CYRUS_API_KEY indicates this worker is paired with the
+					// managed control plane (paid customer). Absence means the worker is
+					// running on the Community plan (self-managed config.json).
+					const isManagedCustomer = !!process.env.CYRUS_API_KEY;
+
+					const commonPreamble = [
+						`Cyrus received this webhook but has no repository configured for \`${repoFullName}\`, so no agent session was started.`,
+						``,
+						`**Likely causes:**`,
+						`- The owner/org was **renamed or transferred** on GitHub. Webhooks are delivered under the current owner name, but Cyrus's stored repository URL still points at the old one. GitHub's web redirects don't apply to webhook payloads — the stored URL has to be updated explicitly.`,
+						`- The stored repository URL has a typo (e.g. wrong org/owner) and doesn't match the repo this event came from.`,
+						`- The GitHub App / webhook is installed on a repo Cyrus isn't configured for at all.`,
+						``,
+					];
+
+					const fix = isManagedCustomer
+						? `**What to do:** there's currently no self-serve way to update the stored repository URL on your plan — please reach out to Cyrus support and reference \`${repoFullName}\` and we'll reconcile it on the backend.`
+						: `**What to do:** open \`~/.cyrus/config.json\` on the worker and update the \`githubUrl\` of the relevant repository to \`https://github.com/${repoFullName}\`, then restart the worker. If this repo shouldn't be sending events to Cyrus at all, remove the GitHub App from it instead.`;
+
 					this.gitHubCommentService
 						.postIssueComment({
 							token: reactionToken,
 							owner: extractRepoOwner(event),
 							repo: extractRepoName(event),
 							issueNumber: prNumber,
-							body: [
-								`Cyrus received this webhook but has no repository configured for \`${repoFullName}\`, so no agent session was started.`,
-								``,
-								`**Likely causes:**`,
-								`- The owner/org was **renamed or transferred** on GitHub. Webhooks are delivered under the current owner name, but Cyrus's stored \`githubUrl\` still points at the old one. GitHub's web redirects don't apply to webhook payloads — the config has to be updated explicitly.`,
-								`- The configured \`githubUrl\` has a typo (e.g. wrong org/owner) and doesn't match the repo this event came from.`,
-								`- The GitHub App / webhook is installed on a repo Cyrus isn't configured for at all.`,
-								``,
-								`**Fix (cyrus-hosted users):** open the repository in your Cyrus dashboard and update its GitHub URL to \`https://github.com/${repoFullName}\` — that will push a corrected \`config.json\` down to the worker. Editing the worker's \`~/.cyrus/config.json\` directly won't stick, because cyrus-hosted overwrites it on the next sync.`,
-								``,
-								`**Fix (self-hosted users):** open \`~/.cyrus/config.json\` on the worker and update the \`githubUrl\` of the relevant repository to \`https://github.com/${repoFullName}\`, or remove the GitHub App from this repo if it shouldn't be sending events to Cyrus.`,
-							].join("\n"),
+							body: [...commonPreamble, fix].join("\n"),
 						})
 						.catch((err: unknown) => {
 							this.logger.warn(
