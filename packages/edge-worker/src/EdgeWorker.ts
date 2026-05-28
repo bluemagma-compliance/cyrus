@@ -207,7 +207,6 @@ export class EdgeWorker extends EventEmitter {
 	private sessionRepositories: Map<string, string> = new Map(); // Maps session ID to repository ID
 	private lastStopTimeBySession: Map<string, number> = new Map(); // Maps session ID to timestamp of last stop signal (for double-stop detection)
 	private warmInstances: Map<string, WarmQuery> = new Map(); // Pre-warmed Claude sessions keyed by agentSessionId
-	private notifiedUnconfiguredRepos: Set<string> = new Set(); // GitHub repo full names we've already replied to about missing config (dedup per process)
 	private issueTrackers: Map<string, IIssueTrackerService> = new Map(); // one issue tracker per Linear workspace (keyed by linearWorkspaceId)
 	private linearEventTransport: LinearEventTransport | null = null; // Single event transport for webhook delivery
 	private gitHubEventTransport: GitHubEventTransport | null = null; // GitHub event transport for forwarded GitHub webhooks
@@ -1257,13 +1256,7 @@ export class EdgeWorker extends EventEmitter {
 					!!botUsername && commentBody.includes(`@${botUsername}`);
 				const shouldReply = wasMentioned || isPullRequestReview;
 
-				if (
-					shouldReply &&
-					reactionToken &&
-					prNumber &&
-					!this.notifiedUnconfiguredRepos.has(repoFullName)
-				) {
-					this.notifiedUnconfiguredRepos.add(repoFullName);
+				if (shouldReply && reactionToken && prNumber) {
 					this.gitHubCommentService
 						.postIssueComment({
 							token: reactionToken,
