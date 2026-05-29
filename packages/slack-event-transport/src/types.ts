@@ -40,12 +40,12 @@ export interface SlackEventTransportEvents {
  * Processed Slack webhook event that is emitted to listeners
  */
 export interface SlackWebhookEvent {
-	/** The Slack event type (e.g., 'app_mention') */
+	/** The Slack event type (e.g., 'app_mention', 'message') */
 	eventType: SlackEventType;
 	/** Unique event ID from Slack */
 	eventId: string;
 	/** The full Slack event payload */
-	payload: SlackAppMentionEvent;
+	payload: SlackEventPayload;
 	/** Slack Bot token for API access */
 	slackBotToken?: string;
 	/** Workspace/team ID */
@@ -53,9 +53,23 @@ export interface SlackWebhookEvent {
 }
 
 /**
- * Supported Slack event types
+ * Supported Slack event types.
+ *
+ * - `app_mention`: an explicit @mention of the bot — always starts (or resumes)
+ *   a session for the thread.
+ * - `message`: a plain message in a channel/thread the bot can see. Only acted
+ *   on as a follow-up prompt for a thread the bot is already bound to; never
+ *   starts a new session (see ChatSessionHandler.isSessionInitiatingEvent).
  */
-export type SlackEventType = "app_mention";
+export type SlackEventType = "app_mention" | "message";
+
+/**
+ * Union of the Slack event payloads this transport understands.
+ *
+ * Both members share the `user`/`text`/`ts`/`channel`/`thread_ts`/`event_ts`
+ * fields, so downstream consumers can read those without narrowing.
+ */
+export type SlackEventPayload = SlackAppMentionEvent | SlackMessageEvent;
 
 // ============================================================================
 // Slack Event API Payload Types
@@ -107,6 +121,40 @@ export interface SlackAppMentionEvent {
 }
 
 /**
+ * Slack message event payload
+ *
+ * Fired for plain messages in channels/threads the bot can see (requires the
+ * `message.*` bot event subscriptions and matching `*:history` scopes). Cyrus
+ * only acts on threaded replies (`thread_ts` present) in threads it is already
+ * bound to; the gating lives in SlackEventTransport (cheap structural filters)
+ * and ChatSessionHandler (binding check).
+ * @see https://api.slack.com/events/message
+ */
+export interface SlackMessageEvent {
+	/** Event type - always "message" */
+	type: "message";
+	/**
+	 * Message subtype (e.g. "message_changed", "channel_join", "bot_message").
+	 * Plain user messages have no subtype; we ignore anything with one.
+	 */
+	subtype?: string;
+	/** ID of the bot that posted this message, if any. Used to ignore bot/own messages. */
+	bot_id?: string;
+	/** User ID who sent the message */
+	user: string;
+	/** The message text */
+	text: string;
+	/** Message timestamp (unique ID within channel) */
+	ts: string;
+	/** Channel ID where the message occurred */
+	channel: string;
+	/** Thread timestamp - present if this is a threaded reply */
+	thread_ts?: string;
+	/** Event timestamp */
+	event_ts: string;
+}
+
+/**
  * Slack Event API wrapper envelope
  * This is the outer payload that wraps the actual event.
  * @see https://api.slack.com/types/event
@@ -119,7 +167,7 @@ export interface SlackEventEnvelope {
 	/** API app ID */
 	api_app_id: string;
 	/** The actual event data */
-	event: SlackAppMentionEvent;
+	event: SlackEventPayload;
 	/** Type of envelope - "event_callback" for events */
 	type: "event_callback" | "url_verification";
 	/** Unique event ID */

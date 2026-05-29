@@ -28,6 +28,17 @@ export interface ChatPlatformAdapter<TEvent> {
 	/** Extract the user's task text from the raw event */
 	extractTaskInstructions(event: TEvent): string;
 
+	/**
+	 * Whether this event is allowed to *start* a brand-new session for its
+	 * thread. Events that may only continue an already-bound thread (e.g. a
+	 * plain Slack message that isn't an @mention) return false, so the handler
+	 * ignores them when no session exists yet.
+	 *
+	 * Optional — when omitted, every event is treated as session-initiating
+	 * (the behaviour for platforms where every event is an explicit invocation).
+	 */
+	isSessionInitiatingEvent?(event: TEvent): boolean;
+
 	/** Derive a unique thread key for session tracking (e.g., "C123:1704110400.000100") */
 	getThreadKey(event: TEvent): string;
 
@@ -197,6 +208,20 @@ export class ChatSessionHandler<TEvent> {
 				this.logger.info(
 					`Previous session ${existingSessionId} for thread ${threadKey} has no runner, creating new session`,
 				);
+			}
+
+			// No session exists for this thread. Only events explicitly allowed to
+			// start a session may do so — e.g. a Slack @mention. A plain follow-up
+			// message in an unbound thread must be ignored, otherwise every message
+			// in any channel Cyrus can see would spin up a session.
+			if (
+				!existingSessionId &&
+				this.adapter.isSessionInitiatingEvent?.(event) === false
+			) {
+				this.logger.info(
+					`Ignoring non-initiating ${this.adapter.platformName} event for unbound thread ${threadKey}`,
+				);
+				return;
 			}
 
 			// Create an empty workspace directory for this thread

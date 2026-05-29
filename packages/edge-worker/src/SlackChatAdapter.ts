@@ -74,6 +74,16 @@ export class SlackChatAdapter
 		);
 	}
 
+	/**
+	 * Only an explicit @mention may start a new session. Plain `message` events
+	 * are follow-ups: they continue a thread Cyrus is already bound to, but
+	 * never spin up a session on their own (otherwise every message in a watched
+	 * channel would start one).
+	 */
+	isSessionInitiatingEvent(event: SlackWebhookEvent): boolean {
+		return event.eventType === "app_mention";
+	}
+
 	getThreadKey(event: SlackWebhookEvent): string {
 		const threadTs = event.payload.thread_ts || event.payload.ts;
 		return `${event.payload.channel}:${threadTs}`;

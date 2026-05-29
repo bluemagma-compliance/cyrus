@@ -150,6 +150,79 @@ describe("ChatSessionHandler chat session permissions", () => {
 	});
 });
 
+describe("ChatSessionHandler session-initiation gate", () => {
+	function buildHandler(adapter: ChatPlatformAdapter<TestEvent>) {
+		const createRunner = vi.fn(
+			() =>
+				({
+					supportsStreamingInput: false,
+					start: vi.fn().mockResolvedValue({ sessionId: "session-1" }),
+					stop: vi.fn(),
+					isRunning: vi.fn().mockReturnValue(false),
+					isStreaming: vi.fn().mockReturnValue(false),
+					addStreamMessage: vi.fn(),
+					getMessages: vi.fn().mockReturnValue([]),
+				}) as any,
+		);
+		const handler = new ChatSessionHandler(adapter, {
+			cyrusHome: TEST_CYRUS_CHAT,
+			chatRepositoryProvider: createStaticProvider([]),
+			runnerConfigBuilder: createMockRunnerConfigBuilder(),
+			createRunner,
+			onWebhookStart: vi.fn(),
+			onWebhookEnd: vi.fn(),
+			onStateChange: vi.fn().mockResolvedValue(undefined),
+			onClaudeError: vi.fn(),
+		});
+		return { handler, createRunner };
+	}
+
+	it("ignores a non-initiating event when no session exists for the thread", async () => {
+		const adapter: ChatPlatformAdapter<TestEvent> = new TestChatAdapter(
+			"unbound-thread",
+		);
+		// Mark this event as a follow-up that must not start a session.
+		adapter.isSessionInitiatingEvent = () => false;
+
+		const { handler, createRunner } = buildHandler(adapter);
+		await handler.handleEvent({
+			eventId: "follow-up",
+			threadKey: "unbound-thread",
+		} as any);
+
+		expect(createRunner).not.toHaveBeenCalled();
+		expect(handler.listThreads()).toHaveLength(0);
+	});
+
+	it("starts a session for an initiating event", async () => {
+		const adapter: ChatPlatformAdapter<TestEvent> = new TestChatAdapter(
+			"bound-thread",
+		);
+		adapter.isSessionInitiatingEvent = () => true;
+
+		const { handler, createRunner } = buildHandler(adapter);
+		await handler.handleEvent({
+			eventId: "mention",
+			threadKey: "bound-thread",
+		} as any);
+
+		expect(createRunner).toHaveBeenCalledTimes(1);
+		expect(handler.listThreads()).toHaveLength(1);
+	});
+});
+
+describe("SlackChatAdapter session initiation", () => {
+	it("treats app_mention as session-initiating and message as a follow-up", () => {
+		const adapter = new SlackChatAdapter(createStaticProvider([]));
+		expect(
+			adapter.isSessionInitiatingEvent({ eventType: "app_mention" } as any),
+		).toBe(true);
+		expect(
+			adapter.isSessionInitiatingEvent({ eventType: "message" } as any),
+		).toBe(false);
+	});
+});
+
 describe("SlackChatAdapter system prompt", () => {
 	it("includes configured repository context and git pull instructions", () => {
 		const repositoryPaths = ["/repo/chat-one", "/repo/chat-two"];
