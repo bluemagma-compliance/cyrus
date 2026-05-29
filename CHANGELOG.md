@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- On Cyrus-managed cloud runtimes, the agent now knows that missing system packages should be added via the dashboard: when the `CYRUS_CLOUD_RUNTIME` environment variable is set to `true`, a system-prompt addendum tells the agent to direct users to https://app.atcyrus.com/settings/packages to install missing `apt`/`npm` packages rather than installing them ad-hoc (off by default for self-host). ([CYPACK-1266](https://linear.app/ceedar/issue/CYPACK-1266), [#1269](https://github.com/cyrusagents/cyrus/pull/1269))
+- On Cyrus-managed cloud runtimes, the agent now knows that missing system packages should be added via the dashboard: when the `CYRUS_CLOUD_RUNTIME` environment variable is set to `true`, a system-prompt addendum tells the agent to direct users to https://app.atcyrus.com/settings/packages to install missing `apt`/`npm` packages rather than installing them ad-hoc (off by default for self-host). ([CYPACK-1266](https://linear.app/ceedar/issue/CYPACK-1266), [#1272](https://github.com/cyrusagents/cyrus/pull/1272))
 - A repository can now ship its own skills: any skill directories under `<repo>/.claude/skills/` are automatically discovered and made available to the agent whenever Cyrus works in that repo — for single-repo issues, multi-repo issues (skills from every participating repo are combined), and GitHub/GitLab mentions alike. ([CYPACK-1261](https://linear.app/ceedar/issue/CYPACK-1261), [#1268](https://github.com/cyrusagents/cyrus/pull/1268))
 
 ## [0.2.60] - 2026-05-28
