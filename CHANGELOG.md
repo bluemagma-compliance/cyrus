@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Git commands (`add`, `commit`, `merge`, etc.) no longer fail with "Operation not permitted" in multi-repo workspaces when running under a sandboxed agent (e.g. the Codex runner). Each repository's git metadata directory is now granted write access, not just the workspace container.
+
 
 ## [0.2.62] - 2026-06-02
 

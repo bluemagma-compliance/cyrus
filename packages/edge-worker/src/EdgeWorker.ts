@@ -4157,7 +4157,7 @@ ${taskSection}`;
 			...new Set([
 				attachmentsDir,
 				...allRepoPaths,
-				...this.gitService.getGitMetadataDirectories(workspace.path),
+				...this.gitService.getGitMetadataDirectoriesForWorkspace(workspace),
 			]),
 		];
 
@@ -7177,7 +7177,9 @@ ${input.userComment}
 				attachmentsDir,
 				repository.repositoryPath,
 				...additionalAllowedDirectories,
-				...this.gitService.getGitMetadataDirectories(session.workspace.path),
+				...this.gitService.getGitMetadataDirectoriesForWorkspace(
+					session.workspace,
+				),
 			]),
 		];
 
