@@ -6,6 +6,7 @@ import type { ILogger } from "cyrus-core";
 import { describe, expect, it, vi } from "vitest";
 import { OOM_MARKER, wrapCommand } from "../src/hooks/cyrus-tool-exec.js";
 import {
+	buildMemoryLimitNotice,
 	buildOomReportHook,
 	extractResultText,
 	HttpOomEventReporter,
@@ -209,6 +210,41 @@ describe("buildOomReportHook", () => {
 		expect(reporter.events[0].runnerSessionId).toBe("assigned-late");
 	});
 
+	it("invokes onOom once when the marker is present", async () => {
+		const reporter = recordingReporter();
+		const onOom = vi.fn();
+		const hook = buildOomReportHook(silentLogger, reporter, { onOom });
+		const matcher = hook.PostToolUseFailure?.[0];
+		if (!matcher) throw new Error("expected a PostToolUseFailure matcher");
+		await runPost(matcher, makeFailureInput(MARKER_TEXT, "cargo build"));
+		expect(onOom).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not invoke onOom when the marker is absent", async () => {
+		const onOom = vi.fn();
+		const hook = buildOomReportHook(silentLogger, recordingReporter(), {
+			onOom,
+		});
+		const matcher = hook.PostToolUseFailure?.[0];
+		if (!matcher) throw new Error("expected a PostToolUseFailure matcher");
+		await runPost(matcher, makeFailureInput("exit 1"));
+		expect(onOom).not.toHaveBeenCalled();
+	});
+
+	it("invokes onOom even when the telemetry reporter throws", async () => {
+		const onOom = vi.fn();
+		const throwingReporter: OomEventReporter = {
+			async report() {
+				throw new Error("boom");
+			},
+		};
+		const hook = buildOomReportHook(silentLogger, throwingReporter, { onOom });
+		const matcher = hook.PostToolUseFailure?.[0];
+		if (!matcher) throw new Error("expected a PostToolUseFailure matcher");
+		await runPost(matcher, makeFailureInput(MARKER_TEXT));
+		expect(onOom).toHaveBeenCalledTimes(1);
+	});
+
 	it("fails open (returns {}) when the reporter throws", async () => {
 		const reporter: OomEventReporter = {
 			async report() {
@@ -220,6 +256,21 @@ describe("buildOomReportHook", () => {
 			makeFailureInput(MARKER_TEXT),
 		);
 		expect(result).toEqual({});
+	});
+});
+
+describe("buildMemoryLimitNotice", () => {
+	const billingUrl = "https://app.atcyrus.com/settings/billing";
+
+	it("links the billing page and states the upgrade rationale, concisely", () => {
+		const notice = buildMemoryLimitNotice(billingUrl);
+		expect(notice).toContain(`(${billingUrl})`);
+		expect(notice).toContain("memory budget");
+		// The "why": more compute lets heavy work finish in one pass.
+		expect(notice).toContain("More compute");
+		expect(notice).toContain("finish in one pass");
+		// Renders as a distinct blockquote footer.
+		expect(notice.startsWith("> ")).toBe(true);
 	});
 });
 

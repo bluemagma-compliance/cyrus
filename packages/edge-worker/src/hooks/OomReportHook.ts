@@ -81,6 +81,13 @@ export interface OomReportContext {
 	linearIssueIdentifier?: string;
 	linearIssueUrl?: string;
 	getRunnerSessionId?: () => string | undefined;
+	/**
+	 * Invoked once per detected OOM, before the (best-effort) telemetry report.
+	 * Lets the caller record that this session hit its memory budget so a
+	 * user-facing notice can be surfaced later — independent of whether the
+	 * telemetry POST succeeds.
+	 */
+	onOom?: () => void;
 }
 
 /**
@@ -212,6 +219,22 @@ export function extractResultText(toolResponse: unknown): string {
 }
 
 /**
+ * The user-facing notice appended to a session's final result when one of its
+ * Bash commands was OOM-killed. Kept concise and on-brand (atcyrus.com voice:
+ * speed/shipping-first, second person), and it states the *why* — more compute
+ * means heavy builds/installs/test suites run to completion instead of stalling.
+ * `billingUrl` is the cyrus-hosted billing page where compute can be upgraded.
+ */
+export function buildMemoryLimitNotice(billingUrl: string): string {
+	return (
+		"> ⚠️ **A command was stopped for exceeding your plan's memory budget.** " +
+		"More compute lets heavy builds, installs, and test suites finish in one " +
+		"pass — fewer stalls, more shipped. " +
+		`[Upgrade your plan →](${billingUrl})`
+	);
+}
+
+/**
  * Build the hook that reports per-command OOM kills to the cyrus-hosted control
  * plane. It registers on **`PostToolUseFailure`**, not `PostToolUse`: an
  * OOM-killed command exits non-zero, so the SDK routes its result to the
@@ -247,6 +270,10 @@ export function buildOomReportHook(
 							if (!text.includes(OOM_MARKER)) {
 								return {};
 							}
+
+							// Record the OOM first, so a user-facing notice can be
+							// surfaced even if the telemetry POST below fails.
+							context.onOom?.();
 
 							const { budgetMb, peakBytes, oomKillCount } =
 								parseOomMarker(text);

@@ -354,6 +354,11 @@ export class RunnerConfigBuilder {
 				input.session.geminiSessionId ??
 				input.session.codexSessionId ??
 				input.session.cursorSessionId,
+			// Flag the (mutated-in-place) session so the final result can carry an
+			// upgrade-compute notice. AgentSessionManager reads the same object.
+			onOom: () => {
+				input.session.hitMemoryLimit = true;
+			},
 		});
 
 		const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {

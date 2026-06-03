@@ -10,6 +10,7 @@ import type {
 	SDKSystemMessage,
 	SDKUserMessage,
 } from "cyrus-claude-runner";
+import { getCyrusAppUrl } from "cyrus-cloudflare-tunnel-client";
 import {
 	AgentSessionStatus,
 	AgentSessionType,
@@ -24,7 +25,7 @@ import {
 	type SerializedCyrusAgentSessionEntry,
 	type Workspace,
 } from "cyrus-core";
-
+import { buildMemoryLimitNotice } from "./hooks/OomReportHook.js";
 import type {
 	ActivityPostOptions,
 	ActivitySignal,
@@ -647,7 +648,7 @@ export class AgentSessionManager extends EventEmitter {
 		// (structured content) over result.result (plain-text duplicate).
 		const bufferedAssistant = this.lastAssistantBodyBySession.get(sessionId);
 		this.lastAssistantBodyBySession.delete(sessionId);
-		const content = (
+		const baseContent = (
 			resultMessage.is_error
 				? resultMessage.is_error &&
 					"errors" in resultMessage &&
@@ -663,6 +664,14 @@ export class AgentSessionManager extends EventEmitter {
 						? resultMessage.result
 						: ""))
 		).trim();
+
+		// If a Bash command was OOM-killed this session (cloud per-command memory
+		// cap), append a concise upgrade-compute notice. Appending it here — rather
+		// than relying on the model — guarantees it lands at the END of the result
+		// and is never drowned out in the thought/action stream.
+		const content = session?.hitMemoryLimit
+			? this.appendMemoryLimitNotice(baseContent)
+			: baseContent;
 
 		const resultEntry: CyrusAgentSessionEntry = {
 			// Set the appropriate session ID based on runner type
@@ -685,6 +694,17 @@ export class AgentSessionManager extends EventEmitter {
 		// DON'T store locally - syncEntryToActivitySink will do it
 		// Sync to Linear
 		await this.syncEntryToActivitySink(resultEntry, sessionId);
+	}
+
+	/**
+	 * Append the upgrade-compute notice (linking the cyrus-hosted billing page)
+	 * to a result body, separated by a horizontal rule so it reads as a distinct
+	 * footer. Falls back to the notice alone when the result body is empty.
+	 */
+	private appendMemoryLimitNotice(content: string): string {
+		const billingUrl = `${getCyrusAppUrl().replace(/\/+$/, "")}/settings/billing`;
+		const notice = buildMemoryLimitNotice(billingUrl);
+		return content ? `${content}\n\n---\n\n${notice}` : notice;
 	}
 
 	/**
@@ -1418,7 +1438,7 @@ export class AgentSessionManager extends EventEmitter {
 		const log = this.sessionLog(sessionId);
 		const session = this.sessions.get(sessionId);
 
-		if (!session || !session.externalSessionId) {
+		if (!session?.externalSessionId) {
 			log.debug(
 				`Skipping ${label} - no external session ID (platform: ${session?.issueContext?.trackerId || "unknown"})`,
 			);
@@ -1681,7 +1701,7 @@ export class AgentSessionManager extends EventEmitter {
 		message: SDKStatusMessage,
 	): Promise<void> {
 		const session = this.sessions.get(sessionId);
-		if (!session || !session.externalSessionId) {
+		if (!session?.externalSessionId) {
 			const log = this.sessionLog(sessionId);
 			log.debug(
 				`Skipping status message - no external session ID (platform: ${session?.issueContext?.trackerId || "unknown"})`,

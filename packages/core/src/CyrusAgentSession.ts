@@ -101,6 +101,12 @@ export interface CyrusAgentSession {
 	codexSessionId?: string; // Codex-specific session ID (assigned once it initializes)
 	cursorSessionId?: string; // Cursor-specific session ID (assigned once it initializes)
 	agentRunner?: IAgentRunner;
+	/**
+	 * Set true when one of this session's Bash commands was OOM-killed by the
+	 * cloud per-command memory cap (CYHOST-1012). Drives the upgrade-compute
+	 * notice appended to the final result. Cloud-only — never set on self-host.
+	 */
+	hitMemoryLimit?: boolean;
 	metadata?: {
 		model?: string;
 		tools?: string[];
