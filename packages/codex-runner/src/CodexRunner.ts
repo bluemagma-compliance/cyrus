@@ -56,8 +56,14 @@ interface ToolProjection {
 	isError: boolean;
 }
 
+interface McpAllowedToolsFilter {
+	allowAll: boolean;
+	tools: string[];
+}
+
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const CODEX_MCP_DOCS_URL = "https://platform.openai.com/docs/docs-mcp";
+const CODEX_MCP_APPROVE_MODE = "approve";
 
 function toFiniteNumber(value: number | undefined): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -375,6 +381,134 @@ function loadMcpConfigFromPaths(
 	}
 
 	return mcpServers;
+}
+
+function parseMcpAllowedTool(
+	toolPattern: string,
+): { serverName: string; toolName?: string } | null {
+	const trimmed = toolPattern.trim();
+	if (!trimmed.startsWith("mcp__")) {
+		return null;
+	}
+
+	const parts = trimmed.split("__");
+	const serverName = parts[1]?.trim();
+	if (!serverName) {
+		return null;
+	}
+
+	if (parts.length === 2) {
+		return { serverName };
+	}
+
+	const toolName = parts.slice(2).join("__").trim();
+	return toolName ? { serverName, toolName } : { serverName };
+}
+
+function buildMcpAllowedToolsFilters(
+	allowedTools: string[] | undefined,
+): Map<string, McpAllowedToolsFilter> {
+	const filters = new Map<string, McpAllowedToolsFilter>();
+	for (const allowedTool of allowedTools ?? []) {
+		const parsed = parseMcpAllowedTool(allowedTool);
+		if (!parsed) {
+			continue;
+		}
+
+		const filter = filters.get(parsed.serverName) ?? {
+			allowAll: false,
+			tools: [],
+		};
+
+		if (!parsed.toolName) {
+			filter.allowAll = true;
+			filter.tools = [];
+		} else if (!filter.allowAll && !filter.tools.includes(parsed.toolName)) {
+			filter.tools.push(parsed.toolName);
+		}
+
+		filters.set(parsed.serverName, filter);
+	}
+
+	return filters;
+}
+
+function normalizeMcpServerFilterName(serverName: string): string {
+	return serverName.replace(/[-_]+/g, "").toLowerCase();
+}
+
+function mergeMcpAllowedToolsFilters(
+	filters: McpAllowedToolsFilter[],
+): McpAllowedToolsFilter | undefined {
+	if (filters.length === 0) {
+		return undefined;
+	}
+
+	const merged: McpAllowedToolsFilter = {
+		allowAll: false,
+		tools: [],
+	};
+
+	for (const filter of filters) {
+		if (filter.allowAll) {
+			return { allowAll: true, tools: [] };
+		}
+
+		for (const tool of filter.tools) {
+			if (!merged.tools.includes(tool)) {
+				merged.tools.push(tool);
+			}
+		}
+	}
+
+	return merged;
+}
+
+function getMcpAllowedToolsFilter(
+	filters: Map<string, McpAllowedToolsFilter>,
+	serverName: string,
+): McpAllowedToolsFilter | undefined {
+	const matchingFilters: McpAllowedToolsFilter[] = [];
+	const exact = filters.get(serverName);
+	if (exact) {
+		matchingFilters.push(exact);
+	}
+
+	const normalizedServerName = normalizeMcpServerFilterName(serverName);
+	for (const [allowedServerName, filter] of filters.entries()) {
+		if (allowedServerName === serverName) {
+			continue;
+		}
+		if (
+			normalizeMcpServerFilterName(allowedServerName) === normalizedServerName
+		) {
+			matchingFilters.push(filter);
+		}
+	}
+
+	return mergeMcpAllowedToolsFilters(matchingFilters);
+}
+
+function applyCyrusMcpAllowedToolsSemantics(
+	mapped: CodexConfigOverrides,
+	allowedToolsFilter: McpAllowedToolsFilter,
+	options: { hasNativeToolFilter: boolean },
+): void {
+	const shouldGenerateToolFilter =
+		!allowedToolsFilter.allowAll &&
+		allowedToolsFilter.tools.length > 0 &&
+		!options.hasNativeToolFilter;
+
+	if (shouldGenerateToolFilter) {
+		mapped.enabled_tools = allowedToolsFilter.tools;
+	}
+
+	// Codex separates tool visibility (`enabled_tools`) from MCP approval. Cyrus
+	// allowedTools are already the operator's allow-list, so generated allowances
+	// must also be approved for non-interactive Codex exec runs.
+	if (!Object.hasOwn(mapped, "default_tools_approval_mode")) {
+		mapped.default_tools_approval_mode = CODEX_MCP_APPROVE_MODE;
+	}
 }
 
 function copyConfigString(
@@ -720,6 +854,10 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 			return undefined;
 		}
 
+		const allowedToolsFilters = buildMcpAllowedToolsFilters(
+			this.config.allowedTools,
+		);
+
 		// Codex MCP configuration reference:
 		// https://platform.openai.com/docs/docs-mcp
 		const codexServers: Record<string, CodexConfigOverrides> = {};
@@ -763,6 +901,24 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 				);
 				continue;
 			}
+
+			const allowedToolsFilter = getMcpAllowedToolsFilter(
+				allowedToolsFilters,
+				serverName,
+			);
+			const hasNativeToolFilter =
+				Object.hasOwn(mapped, "enabled_tools") ||
+				Object.hasOwn(mapped, "disabled_tools");
+			if (allowedToolsFilter) {
+				applyCyrusMcpAllowedToolsSemantics(mapped, allowedToolsFilter, {
+					hasNativeToolFilter,
+				});
+			}
+			// If the MCP config already contains Codex-native enabled_tools or
+			// disabled_tools, keep those exact filters. They are more specific to
+			// Codex than Claude-style Cyrus allowedTools entries. A bare
+			// `mcp__server` intentionally emits no enabled_tools filter because it
+			// means "allow every tool exposed by this configured server".
 
 			codexServers[serverName] = mapped;
 		}
