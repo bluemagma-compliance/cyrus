@@ -377,6 +377,61 @@ function loadMcpConfigFromPaths(
 	return mcpServers;
 }
 
+function copyConfigString(
+	target: CodexConfigOverrides,
+	source: Record<string, unknown>,
+	key: string,
+): void {
+	if (typeof source[key] === "string") {
+		target[key] = source[key] as string;
+	}
+}
+
+function copyConfigNumber(
+	target: CodexConfigOverrides,
+	source: Record<string, unknown>,
+	key: string,
+): void {
+	if (typeof source[key] === "number") {
+		target[key] = source[key] as number;
+	}
+}
+
+function copyConfigBoolean(
+	target: CodexConfigOverrides,
+	source: Record<string, unknown>,
+	key: string,
+): void {
+	if (typeof source[key] === "boolean") {
+		target[key] = source[key] as boolean;
+	}
+}
+
+function copyConfigArray(
+	target: CodexConfigOverrides,
+	source: Record<string, unknown>,
+	key: string,
+): void {
+	if (Array.isArray(source[key])) {
+		target[key] = source[
+			key
+		] as CodexConfigOverrides[keyof CodexConfigOverrides];
+	}
+}
+
+function copyConfigObject(
+	target: CodexConfigOverrides,
+	source: Record<string, unknown>,
+	sourceKey: string,
+	targetKey: string = sourceKey,
+): void {
+	const value = source[sourceKey];
+	if (value && typeof value === "object" && !Array.isArray(value)) {
+		target[targetKey] =
+			value as CodexConfigOverrides[keyof CodexConfigOverrides];
+	}
+}
+
 export declare interface CodexRunner {
 	on<K extends keyof CodexRunnerEvents>(
 		event: K,
@@ -681,57 +736,26 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 			}
 
 			const mapped: CodexConfigOverrides = {};
-			if (typeof configAny.command === "string") {
-				mapped.command = configAny.command;
-			}
-			if (Array.isArray(configAny.args)) {
-				mapped.args =
-					configAny.args as unknown as CodexConfigOverrides[keyof CodexConfigOverrides];
-			}
-			if (
-				configAny.env &&
-				typeof configAny.env === "object" &&
-				!Array.isArray(configAny.env)
-			) {
-				mapped.env =
-					configAny.env as unknown as CodexConfigOverrides[keyof CodexConfigOverrides];
-			}
-			if (typeof configAny.cwd === "string") {
-				mapped.cwd = configAny.cwd;
-			}
-			if (typeof configAny.url === "string") {
-				mapped.url = configAny.url;
-			}
-			if (
-				configAny.http_headers &&
-				typeof configAny.http_headers === "object" &&
-				!Array.isArray(configAny.http_headers)
-			) {
-				mapped.http_headers =
-					configAny.http_headers as unknown as CodexConfigOverrides[keyof CodexConfigOverrides];
-			}
-			if (
-				configAny.headers &&
-				typeof configAny.headers === "object" &&
-				!Array.isArray(configAny.headers)
-			) {
-				mapped.http_headers =
-					configAny.headers as unknown as CodexConfigOverrides[keyof CodexConfigOverrides];
-			}
-			if (
-				configAny.env_http_headers &&
-				typeof configAny.env_http_headers === "object" &&
-				!Array.isArray(configAny.env_http_headers)
-			) {
-				mapped.env_http_headers =
-					configAny.env_http_headers as unknown as CodexConfigOverrides[keyof CodexConfigOverrides];
-			}
-			if (typeof configAny.bearer_token_env_var === "string") {
-				mapped.bearer_token_env_var = configAny.bearer_token_env_var;
-			}
-			if (typeof configAny.timeout === "number") {
-				mapped.timeout = configAny.timeout;
-			}
+			copyConfigString(mapped, configAny, "command");
+			copyConfigArray(mapped, configAny, "args");
+			copyConfigObject(mapped, configAny, "env");
+			copyConfigArray(mapped, configAny, "env_vars");
+			copyConfigString(mapped, configAny, "cwd");
+			copyConfigString(mapped, configAny, "experimental_environment");
+			copyConfigString(mapped, configAny, "url");
+			copyConfigObject(mapped, configAny, "http_headers");
+			copyConfigObject(mapped, configAny, "headers", "http_headers");
+			copyConfigObject(mapped, configAny, "env_http_headers");
+			copyConfigString(mapped, configAny, "bearer_token_env_var");
+			copyConfigNumber(mapped, configAny, "timeout");
+			copyConfigNumber(mapped, configAny, "startup_timeout_sec");
+			copyConfigNumber(mapped, configAny, "tool_timeout_sec");
+			copyConfigBoolean(mapped, configAny, "enabled");
+			copyConfigBoolean(mapped, configAny, "required");
+			copyConfigArray(mapped, configAny, "enabled_tools");
+			copyConfigArray(mapped, configAny, "disabled_tools");
+			copyConfigString(mapped, configAny, "default_tools_approval_mode");
+			copyConfigObject(mapped, configAny, "tools");
 
 			if (!mapped.command && !mapped.url) {
 				console.warn(

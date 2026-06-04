@@ -164,7 +164,10 @@ import {
 	RepositoryRouter,
 	type RepositoryRouterDeps,
 } from "./RepositoryRouter.js";
-import { RunnerConfigBuilder } from "./RunnerConfigBuilder.js";
+import {
+	RunnerConfigBuilder,
+	resolveIssueMcpConfigPath,
+} from "./RunnerConfigBuilder.js";
 import { RunnerSelectionService } from "./RunnerSelectionService.js";
 import { SharedApplicationServer } from "./SharedApplicationServer.js";
 import {
@@ -6732,16 +6735,13 @@ ${input.userComment}
 					// mcpConfigPath stays scoped to that repo, otherwise the
 					// team-level `linearMcpConfigs` list applies. Same coupling
 					// the live `buildIssueConfig` path uses.
-					const repoHasAllowedToolsOverride =
-						Array.isArray(repo.allowedTools) && repo.allowedTools.length > 0;
-					const mcpConfigPath = repoHasAllowedToolsOverride
-						? this.mcpConfigService.buildMergedMcpConfigPath(repo)
-						: this.config.linearMcpConfigs &&
-								this.config.linearMcpConfigs.length > 0
-							? this.config.linearMcpConfigs.length === 1
-								? this.config.linearMcpConfigs[0]
-								: [...this.config.linearMcpConfigs]
-							: undefined;
+					const mcpConfigPath = resolveIssueMcpConfigPath(
+						repo,
+						this.config.linearMcpConfigs,
+						this.mcpConfigService.buildMergedMcpConfigPath.bind(
+							this.mcpConfigService,
+						),
+					);
 					let mcpServers: Record<string, McpServerConfig> = { ...mcpConfig };
 					if (mcpConfigPath) {
 						const paths = Array.isArray(mcpConfigPath)

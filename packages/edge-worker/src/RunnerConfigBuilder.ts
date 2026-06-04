@@ -151,6 +151,31 @@ export interface IssueRunnerConfigInput {
 	egressCaCertPath?: string;
 }
 
+export function resolveIssueMcpConfigPath(
+	repository: RepositoryConfig,
+	platformMcpConfigOverrides: readonly string[] | undefined,
+	buildMergedMcpConfigPath: (
+		repositories: RepositoryConfig | RepositoryConfig[],
+	) => string | string[] | undefined,
+): string | string[] | undefined {
+	const repoHasAllowedToolsOverride =
+		Array.isArray(repository.allowedTools) &&
+		repository.allowedTools.length > 0;
+	if (repoHasAllowedToolsOverride) {
+		return buildMergedMcpConfigPath(repository);
+	}
+
+	if (!platformMcpConfigOverrides || platformMcpConfigOverrides.length === 0) {
+		return undefined;
+	}
+
+	if (platformMcpConfigOverrides.length === 1) {
+		return platformMcpConfigOverrides[0];
+	}
+
+	return [...platformMcpConfigOverrides];
+}
+
 /**
  * Shared runner config assembly for both issue and chat sessions.
  *
@@ -346,17 +371,13 @@ export class RunnerConfigBuilder {
 		//     (`linearMcpConfigs` / `githubMcpConfigs`).
 		// This guarantees the agent's permission rules and the loaded MCP
 		// server set always come from the same scope.
-		const repoHasAllowedToolsOverride =
-			Array.isArray(input.repository.allowedTools) &&
-			input.repository.allowedTools.length > 0;
-		const mcpConfigPath = repoHasAllowedToolsOverride
-			? this.mcpConfigProvider.buildMergedMcpConfigPath(input.repository)
-			: input.platformMcpConfigOverrides &&
-					input.platformMcpConfigOverrides.length > 0
-				? input.platformMcpConfigOverrides.length === 1
-					? input.platformMcpConfigOverrides[0]
-					: [...input.platformMcpConfigOverrides]
-				: undefined;
+		const mcpConfigPath = resolveIssueMcpConfigPath(
+			input.repository,
+			input.platformMcpConfigOverrides,
+			this.mcpConfigProvider.buildMergedMcpConfigPath.bind(
+				this.mcpConfigProvider,
+			),
+		);
 
 		// Multi-repo sessions place each repo in a sibling sub-worktree of the
 		// cwd (the workspace container). Register those sub-worktrees as
