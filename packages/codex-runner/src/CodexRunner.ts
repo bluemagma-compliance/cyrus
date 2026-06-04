@@ -489,11 +489,13 @@ function getMcpAllowedToolsFilter(
 	return mergeMcpAllowedToolsFilters(matchingFilters);
 }
 
-function isConfigObject(value: unknown): value is CodexConfigOverrides {
-	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+function isConfigObject(
+	value: unknown,
+): value is Record<string, CodexConfigValue> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function ensureCodexMcpToolApproval(
+function setMissingCodexMcpToolApproval(
 	mapped: CodexConfigOverrides,
 	toolName: string,
 ): void {
@@ -511,21 +513,30 @@ function ensureCodexMcpToolApproval(
 	mapped.tools = tools;
 }
 
-function applyCyrusMcpApprovalSemantics(
+function applyCyrusMcpAllowedToolsSemantics(
 	mapped: CodexConfigOverrides,
 	allowedToolsFilter: McpAllowedToolsFilter,
-	options: { approveListedTools: boolean },
+	options: { hasNativeToolFilter: boolean },
 ): void {
+	const shouldGenerateToolFilter =
+		!allowedToolsFilter.allowAll &&
+		allowedToolsFilter.tools.length > 0 &&
+		!options.hasNativeToolFilter;
+
+	if (shouldGenerateToolFilter) {
+		mapped.enabled_tools = allowedToolsFilter.tools;
+	}
+
+	// Codex separates tool visibility (`enabled_tools`) from MCP approval. Cyrus
+	// allowedTools are already the operator's allow-list, so generated allowances
+	// must also be approved for non-interactive Codex exec runs.
 	if (!Object.hasOwn(mapped, "default_tools_approval_mode")) {
 		mapped.default_tools_approval_mode = CODEX_MCP_APPROVE_MODE;
 	}
 
-	// Codex separates tool visibility (`enabled_tools`) from approval. Cyrus
-	// allowedTools are already the operator's allow-list, so generated MCP
-	// allowances must also be pre-approved for non-interactive Codex exec runs.
-	if (options.approveListedTools && !allowedToolsFilter.allowAll) {
+	if (shouldGenerateToolFilter) {
 		for (const tool of allowedToolsFilter.tools) {
-			ensureCodexMcpToolApproval(mapped, tool);
+			setMissingCodexMcpToolApproval(mapped, tool);
 		}
 	}
 }
@@ -928,17 +939,9 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 			const hasNativeToolFilter =
 				Object.hasOwn(mapped, "enabled_tools") ||
 				Object.hasOwn(mapped, "disabled_tools");
-			if (
-				allowedToolsFilter &&
-				!allowedToolsFilter.allowAll &&
-				allowedToolsFilter.tools.length > 0 &&
-				!hasNativeToolFilter
-			) {
-				mapped.enabled_tools = allowedToolsFilter.tools;
-			}
 			if (allowedToolsFilter) {
-				applyCyrusMcpApprovalSemantics(mapped, allowedToolsFilter, {
-					approveListedTools: !hasNativeToolFilter,
+				applyCyrusMcpAllowedToolsSemantics(mapped, allowedToolsFilter, {
+					hasNativeToolFilter,
 				});
 			}
 			// If the MCP config already contains Codex-native enabled_tools or
