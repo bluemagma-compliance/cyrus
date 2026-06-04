@@ -111,4 +111,39 @@ describe("CodexRunner managed skills", () => {
 			expect.stringContaining("Skipping managed skill 'custom-user'"),
 		);
 	});
+
+	it("removes staged skill symlinks when the runner is stopped", () => {
+		const root = makeTempDir();
+		const worktree = join(root, "worktree");
+		const userPlugin = join(root, "user-plugin");
+		mkdirSync(worktree, { recursive: true });
+		writeSkill(join(userPlugin, "skills"), "custom-user");
+
+		const runner = new CodexRunner({
+			workingDirectory: worktree,
+			cyrusHome: root,
+			plugins: [{ type: "local", path: userPlugin }],
+			skills: ["custom-user"],
+		});
+
+		(
+			runner as unknown as { prepareManagedSkillsForCodex: () => void }
+		).prepareManagedSkillsForCodex();
+		(
+			runner as unknown as {
+				sessionInfo: { sessionId: string; startedAt: Date; isRunning: boolean };
+			}
+		).sessionInfo = {
+			sessionId: "session-1",
+			startedAt: new Date(),
+			isRunning: true,
+		};
+
+		const stagedUserSkill = join(worktree, ".agents", "skills", "custom-user");
+		expect(lstatSync(stagedUserSkill).isSymbolicLink()).toBe(true);
+
+		runner.stop();
+
+		expect(existsSync(stagedUserSkill)).toBe(false);
+	});
 });

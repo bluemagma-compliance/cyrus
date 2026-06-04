@@ -1335,11 +1335,11 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 	}
 
 	stop(): void {
-		if (!this.sessionInfo?.isRunning) {
-			return;
+		if (this.sessionInfo?.isRunning) {
+			this.wasStopped = true;
+			this.abortController?.abort();
 		}
-		this.wasStopped = true;
-		this.abortController?.abort();
+		this.cleanupRuntimeState();
 	}
 
 	isRunning(): boolean {
