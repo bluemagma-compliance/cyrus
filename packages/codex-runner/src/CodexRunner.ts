@@ -489,30 +489,6 @@ function getMcpAllowedToolsFilter(
 	return mergeMcpAllowedToolsFilters(matchingFilters);
 }
 
-function isConfigObject(
-	value: unknown,
-): value is Record<string, CodexConfigValue> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function setMissingCodexMcpToolApproval(
-	mapped: CodexConfigOverrides,
-	toolName: string,
-): void {
-	const tools = isConfigObject(mapped.tools) ? { ...mapped.tools } : {};
-	const existingToolConfig = tools[toolName];
-	const toolConfig = isConfigObject(existingToolConfig)
-		? { ...existingToolConfig }
-		: {};
-
-	if (!Object.hasOwn(toolConfig, "approval_mode")) {
-		toolConfig.approval_mode = CODEX_MCP_APPROVE_MODE;
-	}
-
-	tools[toolName] = toolConfig;
-	mapped.tools = tools;
-}
-
 function applyCyrusMcpAllowedToolsSemantics(
 	mapped: CodexConfigOverrides,
 	allowedToolsFilter: McpAllowedToolsFilter,
@@ -532,12 +508,6 @@ function applyCyrusMcpAllowedToolsSemantics(
 	// must also be approved for non-interactive Codex exec runs.
 	if (!Object.hasOwn(mapped, "default_tools_approval_mode")) {
 		mapped.default_tools_approval_mode = CODEX_MCP_APPROVE_MODE;
-	}
-
-	if (shouldGenerateToolFilter) {
-		for (const tool of allowedToolsFilter.tools) {
-			setMissingCodexMcpToolApproval(mapped, tool);
-		}
 	}
 }
 
