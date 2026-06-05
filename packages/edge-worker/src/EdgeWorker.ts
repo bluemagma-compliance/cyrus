@@ -1095,11 +1095,21 @@ export class EdgeWorker extends EventEmitter {
 				runnerConfigBuilder: this.runnerConfigBuilder,
 				createRunner: (config) => {
 					const runnerType = this.runnerSelectionService.getDefaultRunner();
-					return this.createRunnerForType(runnerType, {
+					const runnerConfig: AgentRunnerConfig & {
+						useAppServer?: boolean;
+					} = {
 						...config,
 						model: this.getDefaultModelForRunner(runnerType),
 						fallbackModel: this.getDefaultFallbackModelForRunner(runnerType),
-					});
+					};
+					// Mirror buildAgentRunnerConfig: opt Codex chat sessions into the
+					// app-server backend (streaming input via turn/steer) when enabled.
+					// Without this, Slack/chat Codex sessions always run exec and defer
+					// follow-up messages with a "still working" notice.
+					if (runnerType === "codex" && this.config.codexUseAppServer) {
+						runnerConfig.useAppServer = true;
+					}
+					return this.createRunnerForType(runnerType, runnerConfig);
 				},
 				// Live read so hot-reloaded config (`setConfig`) picks up new
 				// per-platform MCP paths without rebuilding the handler.
