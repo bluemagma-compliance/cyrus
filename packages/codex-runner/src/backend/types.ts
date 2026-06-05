@@ -71,6 +71,7 @@ export interface NormalizedUsage {
  */
 export type NormalizedCodexEvent =
 	| { kind: "thread-started"; threadId: string }
+	| { kind: "turn-started" }
 	| { kind: "item-started"; item: NormalizedCodexItem }
 	| { kind: "item-completed"; item: NormalizedCodexItem }
 	| { kind: "turn-completed"; usage: NormalizedUsage }

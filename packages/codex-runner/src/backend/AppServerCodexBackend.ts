@@ -134,6 +134,10 @@ export class AppServerCodexBackend
 					: {}),
 			});
 			this.activeTurnId = result?.turn?.id ?? this.activeTurnId;
+			// NOTE: the turn is not steerable the instant turn/start returns — the
+			// server only accepts turn/steer once it has emitted the `turn/started`
+			// notification. The runner is signalled to flush buffered follow-ups
+			// from that notification handler, not here.
 		} catch (error) {
 			this.turnActive = false;
 			this.turnResolve = null;
@@ -159,7 +163,10 @@ export class AppServerCodexBackend
 	}
 
 	isTurnActive(): boolean {
-		return this.turnActive;
+		// A turn is steerable only once turn/start has returned its id — during
+		// the brief turn/start request itself, turnActive is true but there is no
+		// id to target yet.
+		return this.turnActive && this.activeTurnId !== null;
 	}
 
 	async interrupt(): Promise<void> {
@@ -274,6 +281,16 @@ export class AppServerCodexBackend
 		}
 		const p = (params ?? {}) as Record<string, unknown>;
 		switch (method) {
+			case "turn/started": {
+				// The server now accepts turn/steer for this turn. Capture the id
+				// (defensively) and signal the runner to flush buffered follow-ups.
+				const turn = p.turn as { id?: string } | undefined;
+				if (turn?.id) {
+					this.activeTurnId = turn.id;
+				}
+				this.emit("event", { kind: "turn-started" });
+				break;
+			}
 			case "item/started": {
 				const item = translateAppServerItem(p.item);
 				if (item) this.emit("event", { kind: "item-started", item });

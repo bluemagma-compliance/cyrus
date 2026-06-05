@@ -232,6 +232,33 @@ describe("AppServerCodexBackend", () => {
 		).rejects.toThrow(/no active turn/i);
 	});
 
+	it("emits turn-started and gates isTurnActive on the resolved turn id", async () => {
+		const { backend, client } = makeBackend();
+		const events: NormalizedCodexEvent[] = [];
+		backend.on("event", (e) => events.push(e));
+		await backend.open({ ...baseConfig, codexPath: "/bin/true" });
+
+		// No turn yet → not steerable.
+		expect(backend.isTurnActive()).toBe(false);
+
+		const turnDone = backend.runTurn([{ type: "text", text: "go" }]);
+		await Promise.resolve(); // turn/start resolves → activeTurnId set
+
+		expect(backend.isTurnActive()).toBe(true);
+
+		// The runner is signalled to flush buffered follow-ups only once the
+		// server confirms the turn is steerable via the turn/started notification.
+		expect(events.some((e) => e.kind === "turn-started")).toBe(false);
+		client.push("turn/started", { turn: { id: "turn-1" } });
+		expect(events.some((e) => e.kind === "turn-started")).toBe(true);
+
+		client.push("turn/completed", {
+			turn: { id: "turn-1", status: "completed" },
+		});
+		await turnDone;
+		expect(backend.isTurnActive()).toBe(false);
+	});
+
 	it("keeps concurrent backend instances fully isolated", async () => {
 		// Two backends running at once must not share thread/turn state. Each gets
 		// its own client (own threadId); steering one must target only that one.

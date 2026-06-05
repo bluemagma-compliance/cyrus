@@ -2,6 +2,7 @@ import type { NormalizedCodexItem } from "./types.js";
 
 /** Notification method names emitted by the app-server that we act on. */
 export type AppServerNotification =
+	| "turn/started"
 	| "item/started"
 	| "item/completed"
 	| "turn/completed"

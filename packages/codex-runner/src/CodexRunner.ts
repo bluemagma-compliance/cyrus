@@ -9,6 +9,7 @@ import {
 import type {
 	CodexBackend,
 	CodexUserInput,
+	NormalizedCodexEvent,
 	ResolvedCodexConfig,
 } from "./backend/types.js";
 import { CodexEventMapper, type MapperContext } from "./CodexEventMapper.js";
@@ -54,6 +55,14 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 	private readonly mapper: CodexEventMapper;
 	private resolvedConfig: ResolvedCodexConfig | null = null;
 	private backend: CodexBackend | null = null;
+	/**
+	 * Follow-up messages that arrived before the turn became steerable (during
+	 * config build / process spawn / thread start). Flushed via `steer` once the
+	 * turn starts, so a fast follow-up is never lost or wrongly deferred.
+	 */
+	private pendingFollowups: string[] = [];
+	/** Set once the turn reaches a terminal state; gates `isStreaming()`. */
+	private turnFinished = false;
 
 	constructor(config: CodexRunnerConfig) {
 		super();
@@ -92,18 +101,21 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 		if (!backend?.supportsSteer || !backend.steer) {
 			throw new Error("CodexRunner does not support streaming input messages");
 		}
-		if (!backend.isTurnActive()) {
-			// EdgeWorker only calls this while the runner is running (a turn is in
-			// flight); a between-turns comment is delivered as a fresh turn via the
-			// resume path instead.
-			throw new Error("Cannot stream message: no active Codex turn");
+		if (backend.isTurnActive()) {
+			// Turn is live — steer immediately.
+			this.steer(content);
+			return;
 		}
-		void backend.steer([{ type: "text", text: content }]).catch((error) => {
-			this.emit(
-				"error",
-				error instanceof Error ? error : new Error(String(error)),
-			);
-		});
+		if (this.isRunning() && !this.turnFinished) {
+			// Session is starting up (config build / process spawn / thread start)
+			// or the turn hasn't begun yet — buffer and flush once it starts so a
+			// fast follow-up isn't lost. (Without this the message would be wrongly
+			// deferred during the multi-second startup window.)
+			this.pendingFollowups.push(content);
+			return;
+		}
+		// The turn has already finished; the caller should resume with a new turn.
+		throw new Error("Cannot stream message: no active Codex turn");
 	}
 
 	completeStream(): void {
@@ -112,9 +124,34 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 	}
 
 	isStreaming(): boolean {
+		// True for the whole running, not-yet-finished window — including the
+		// startup gap before the turn is active — so callers stream follow-ups in
+		// (buffered if needed) rather than deferring them.
 		return (
-			this.supportsStreamingInput && (this.backend?.isTurnActive() ?? false)
+			this.supportsStreamingInput && this.isRunning() && !this.turnFinished
 		);
+	}
+
+	private steer(content: string): void {
+		void this.backend
+			?.steer?.([{ type: "text", text: content }])
+			.catch((error) => {
+				this.emit(
+					"error",
+					error instanceof Error ? error : new Error(String(error)),
+				);
+			});
+	}
+
+	private flushPendingFollowups(): void {
+		if (this.pendingFollowups.length === 0) {
+			return;
+		}
+		const queued = this.pendingFollowups;
+		this.pendingFollowups = [];
+		for (const content of queued) {
+			this.steer(content);
+		}
 	}
 
 	private async startWithPrompt(
@@ -132,15 +169,21 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 			isRunning: true,
 		};
 		this.wasStopped = false;
+		this.turnFinished = false;
+		this.pendingFollowups = [];
 		this.mapper.reset();
+
+		// Create the backend up front (before the slow config build / process
+		// spawn) so addStreamMessage can buffer follow-ups that arrive during the
+		// startup window rather than throwing.
+		this.backend = this.createBackend();
+		this.backend.on("event", (event) => this.handleBackendEvent(event));
 
 		const builder = new CodexConfigBuilder(this.config);
 		this.resolvedConfig = await builder.build();
 		this.skillStager.stage();
 
 		const prompt = (stringPrompt ?? streamingInitialPrompt ?? "").trim();
-		this.backend = this.createBackend();
-		this.backend.on("event", (event) => this.mapper.handle(event));
 
 		let caughtError: unknown;
 		try {
@@ -153,6 +196,19 @@ export class CodexRunner extends EventEmitter implements IAgentRunner {
 		}
 
 		return this.sessionInfo;
+	}
+
+	private handleBackendEvent(event: NormalizedCodexEvent): void {
+		if (event.kind === "turn-started") {
+			// Turn is now steerable — deliver anything buffered during startup.
+			this.flushPendingFollowups();
+		} else if (
+			event.kind === "turn-completed" ||
+			event.kind === "turn-failed"
+		) {
+			this.turnFinished = true;
+		}
+		this.mapper.handle(event);
 	}
 
 	private toUserInput(prompt: string): CodexUserInput[] {
