@@ -250,6 +250,14 @@ export class ConfigManager extends EventEmitter {
 				// otherwise keep current or default to true
 				issueUpdateTrigger:
 					parsedConfig.issueUpdateTrigger ?? this.config.issueUpdateTrigger,
+				// Slack thread following: use parsed value if explicitly set,
+				// otherwise keep current or default to true
+				slackThreadFollowing:
+					parsedConfig.slackThreadFollowing ?? this.config.slackThreadFollowing,
+				// PR review trigger: use parsed value if explicitly set,
+				// otherwise keep current or default to true
+				prReviewTrigger:
+					parsedConfig.prReviewTrigger ?? this.config.prReviewTrigger,
 				// Sandbox / egress proxy config
 				sandbox: parsedConfig.sandbox ?? this.config.sandbox,
 			};
@@ -347,6 +355,8 @@ export class ConfigManager extends EventEmitter {
 			"defaultDisallowedTools",
 			"promptDefaults",
 			"issueUpdateTrigger",
+			"slackThreadFollowing",
+			"prReviewTrigger",
 			"linearWorkspaces",
 			"userAccessControl",
 			"sandbox",

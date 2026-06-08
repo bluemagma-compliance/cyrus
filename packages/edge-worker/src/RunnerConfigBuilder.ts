@@ -21,6 +21,8 @@ import type {
 } from "cyrus-core";
 import { buildIntentToAddHook } from "./hooks/IntentToAddHook.js";
 import { buildPrMarkerHook } from "./hooks/PrMarkerHook.js";
+import { appendBrowserUseAddendum } from "./prompts/browserUsePromptAddendum.js";
+import { appendCloudRuntimeAddendum } from "./prompts/cloudRuntimePromptAddendum.js";
 import { appendFailureModeAddendum } from "./prompts/failureModePromptAddendum.js";
 
 /**
@@ -251,7 +253,9 @@ export class RunnerConfigBuilder {
 			workspaceName: input.workspaceName,
 			cyrusHome: input.cyrusHome,
 			autoMemoryDirectory,
-			appendSystemPrompt: appendFailureModeAddendum(input.systemPrompt),
+			appendSystemPrompt: appendCloudRuntimeAddendum(
+				appendBrowserUseAddendum(appendFailureModeAddendum(input.systemPrompt)),
+			),
 			...(mcpConfig ? { mcpConfig } : {}),
 			...(mcpConfigPath ? { mcpConfigPath } : {}),
 			...(input.resumeSessionId
@@ -364,19 +368,27 @@ export class RunnerConfigBuilder {
 					: [...input.platformMcpConfigOverrides]
 				: undefined;
 
+		const cwd = input.session.workspace.path;
+
 		// Add Claude Code's auto-memory directory to allowedDirectories so the
 		// agent can Read memory files it (or a prior session) wrote without
 		// hitting the `<tool_use_error>File is in a directory that is denied
 		// by your permission settings.` error. The SDK's default
 		// `autoMemoryDirectory` is derived from cwd as
 		// `~/.claude/projects/<encoded-cwd>/memory/`; we compute the same path
-		// here and forward it explicitly so it gets covered by `--add-dir`.
+		// here and forward it explicitly so it gets covered by Read grants and
+		// sandbox filesystem read allowlists.
 		// For multi-repo sessions we also allowlist the encoded memory dir for
 		// every repo the session can switch into (CYPACK-1253).
-		const primaryAutoMemoryDirectory = getProjectAutoMemoryDirectory(
-			input.session.workspace.path,
-		);
-		const extraMemoryDirectories = (input.repositoryPaths ?? []).map(
+		const primaryAutoMemoryDirectory = getProjectAutoMemoryDirectory(cwd);
+		const sessionRepositoryPaths = Object.values(
+			input.session.workspace.repoPaths ?? {},
+		).filter((p): p is string => typeof p === "string" && p.length > 0);
+		const memoryDirectorySourcePaths =
+			input.repositoryPaths && input.repositoryPaths.length > 0
+				? input.repositoryPaths
+				: sessionRepositoryPaths;
+		const extraMemoryDirectories = memoryDirectorySourcePaths.map(
 			getProjectAutoMemoryDirectory,
 		);
 		const resolvedAllowedDirectories = Array.from(
@@ -387,17 +399,29 @@ export class RunnerConfigBuilder {
 			]),
 		);
 
+		// Multi-repo sessions place each repo in a sibling sub-worktree of the
+		// cwd (the workspace container). Register those sub-worktrees as
+		// `--add-dir` roots so the runner auto-loads each one's `.claude/skills/`
+		// — the cwd-rooted project-skill scan alone would miss them. Single-repo
+		// sessions have cwd === the worktree, so there is nothing extra to add.
+		const additionalDirectories = sessionRepositoryPaths.filter(
+			(p) => p !== cwd,
+		);
+
 		const config: AgentRunnerConfig & Record<string, unknown> = {
-			workingDirectory: input.session.workspace.path,
+			workingDirectory: cwd,
 			allowedTools: input.allowedTools,
 			disallowedTools: input.disallowedTools,
 			allowedDirectories: resolvedAllowedDirectories,
 			autoMemoryDirectory: primaryAutoMemoryDirectory,
+			...(additionalDirectories.length > 0 && { additionalDirectories }),
 			workspaceName: input.session.issue?.identifier || input.session.issueId,
 			cyrusHome: input.cyrusHome,
 			mcpConfigPath,
 			mcpConfig,
-			appendSystemPrompt: appendFailureModeAddendum(input.systemPrompt),
+			appendSystemPrompt: appendCloudRuntimeAddendum(
+				appendBrowserUseAddendum(appendFailureModeAddendum(input.systemPrompt)),
+			),
 			// Priority order: label override > repository config > global default
 			model: finalModel,
 			fallbackModel:

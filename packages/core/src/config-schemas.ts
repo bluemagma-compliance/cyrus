@@ -350,7 +350,7 @@ export const EdgeConfigSchema = z.object({
 	/** Default Gemini model to use across all repositories (e.g., "gemini-2.5-pro") */
 	geminiDefaultModel: z.string().optional(),
 
-	/** Default Codex model to use across all repositories (e.g., "gpt-5.3-codex", "gpt-5.2-codex") */
+	/** Default Codex model to use across all repositories (e.g., "gpt-5.5", "gpt-5.4", "gpt-5.3-codex") */
 	codexDefaultModel: z.string().optional(),
 
 	/** Default Cursor model to use across all repositories (e.g., "composer-2", "gpt-5.4") */
@@ -457,6 +457,22 @@ export const EdgeConfigSchema = z.object({
 	 * Defaults to true if not specified.
 	 */
 	issueUpdateTrigger: z.boolean().optional(),
+
+	/**
+	 * Whether Cyrus follows along with all subsequent replies in a Slack thread
+	 * it has been @mentioned in (treating each reply as a follow-up prompt).
+	 * When false, Cyrus only responds to explicit @mentions. Defaults to true if
+	 * not specified. Can also be force-disabled at runtime via the
+	 * `CYRUS_SLACK_THREAD_FOLLOWING_DISABLED` environment variable.
+	 */
+	slackThreadFollowing: z.boolean().optional(),
+
+	/**
+	 * Whether to trigger agent sessions when a pull request review requests changes.
+	 * When disabled, a `pull_request_review` event produces no acknowledgement comment
+	 * and no agent session. Defaults to true if not specified.
+	 */
+	prReviewTrigger: z.boolean().optional(),
 
 	/**
 	 * Global user access control settings.

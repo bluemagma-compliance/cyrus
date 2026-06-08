@@ -1031,6 +1031,24 @@ export class EdgeWorker extends EventEmitter {
 	}
 
 	/**
+	 * Whether Cyrus should follow plain replies in a Slack thread it was
+	 * @mentioned in. Enabled by default; controlled by the per-team
+	 * `slackThreadFollowing` config toggle (Behaviours page) and force-disabled
+	 * by the `CYRUS_SLACK_THREAD_FOLLOWING_DISABLED` env kill-switch, which takes
+	 * precedence over the toggle. When disabled, only @mentions are processed.
+	 */
+	private isSlackThreadFollowingEnabled(): boolean {
+		const envValue = (process.env.CYRUS_SLACK_THREAD_FOLLOWING_DISABLED ?? "")
+			.toLowerCase()
+			.trim();
+		if (envValue === "true" || envValue === "1" || envValue === "yes") {
+			return false;
+		}
+		// Config toggle defaults to enabled when unset.
+		return this.config.slackThreadFollowing !== false;
+	}
+
+	/**
 	 * Register the Slack event transport for receiving forwarded Slack webhooks from CYHOST.
 	 * This creates a /slack-webhook endpoint that handles @mention events from Slack.
 	 */
@@ -1043,10 +1061,18 @@ export class EdgeWorker extends EventEmitter {
 
 		const routingContext =
 			this.promptBuilder.generateRoutingContextForAllWorkspaces();
+		// Only managed teams (cloud or self-hosted, paired with cyrus-hosted)
+		// have a Behaviours page where automatic Slack thread listening can be
+		// turned off — CYRUS_API_KEY is proof of that pairing, so the
+		// stop-listening prompt guidance is gated on it. Community members
+		// don't have the key (or the page).
+		const cyrusAppBaseUrl = process.env.CYRUS_API_KEY
+			? getCyrusAppUrl()
+			: undefined;
 		const slackAdapter = new SlackChatAdapter(
 			chatRepositoryProvider,
 			this.logger,
-			{ repositoryRoutingContext: routingContext },
+			{ repositoryRoutingContext: routingContext, cyrusAppBaseUrl },
 		);
 
 		if (
@@ -1108,6 +1134,9 @@ export class EdgeWorker extends EventEmitter {
 			fastifyServer: this.sharedApplicationServer.getFastifyInstance(),
 			verificationMode: slackVerificationMode,
 			secret: slackSecret,
+			// Live read so the per-team toggle (hot-reloaded via config) and the
+			// env kill-switch both take effect without rebuilding the transport.
+			isThreadFollowingEnabled: () => this.isSlackThreadFollowingEnabled(),
 		});
 
 		this.slackEventTransport.on("event", (event: SlackWebhookEvent) => {
@@ -1202,6 +1231,16 @@ export class EdgeWorker extends EventEmitter {
 				}
 			}
 
+			// Honor the PR-review trigger toggle: when disabled, ignore
+			// pull_request_review events entirely — no acknowledgement comment and
+			// no agent session. Defaults to enabled when the flag is unset.
+			if (isPullRequestReview && this.config.prReviewTrigger === false) {
+				this.logger.debug(
+					`PR review trigger is disabled, ignoring pull_request_review on ${repoFullName}#${prNumber}`,
+				);
+				return;
+			}
+
 			// Only trigger on comments that mention the bot (when configured)
 			// Skip this check for pull_request_review events — reviews don't @mention the bot
 			if (
@@ -1249,6 +1288,47 @@ export class EdgeWorker extends EventEmitter {
 				this.logger.warn(
 					`No repository configured for GitHub repo: ${repoFullName}`,
 				);
+
+				// Only reply on signals where the user clearly directed something at us:
+				// an explicit @-mention, or a pull_request_review requesting changes.
+				const wasMentioned =
+					!!botUsername && commentBody.includes(`@${botUsername}`);
+				const shouldReply = wasMentioned || isPullRequestReview;
+
+				if (shouldReply && reactionToken && prNumber) {
+					// Presence of CYRUS_API_KEY indicates this worker is paired with the
+					// managed control plane (paid customer). Absence means the worker is
+					// running on the Community plan (self-managed config.json).
+					const isManagedCustomer = !!process.env.CYRUS_API_KEY;
+
+					const commonPreamble = [
+						`Cyrus received this webhook but has no repository configured for \`${repoFullName}\`, so no agent session was started.`,
+						``,
+						`**Likely causes:**`,
+						`- The owner/org was **renamed or transferred** on GitHub. Webhooks are delivered under the current owner name, but Cyrus's stored repository URL still points at the old one. GitHub's web redirects don't apply to webhook payloads — the stored URL has to be updated explicitly.`,
+						`- The stored repository URL has a typo (e.g. wrong org/owner) and doesn't match the repo this event came from.`,
+						`- The GitHub App / webhook is installed on a repo Cyrus isn't configured for at all.`,
+						``,
+					];
+
+					const fix = isManagedCustomer
+						? `**What to do:** there's currently no self-serve way to update the stored repository URL on your plan — please reach out to Cyrus support and reference \`${repoFullName}\` and we'll reconcile it on the backend.`
+						: `**What to do:** open \`~/.cyrus/config.json\` on the worker and update the \`githubUrl\` of the relevant repository to \`https://github.com/${repoFullName}\`. The worker watches the config file and will pick up the change automatically. If this repo shouldn't be sending events to Cyrus at all, remove the GitHub App from it instead.`;
+
+					this.gitHubCommentService
+						.postIssueComment({
+							token: reactionToken,
+							owner: extractRepoOwner(event),
+							repo: extractRepoName(event),
+							issueNumber: prNumber,
+							body: [...commonPreamble, fix].join("\n"),
+						})
+						.catch((err: unknown) => {
+							this.logger.warn(
+								`Failed to post unconfigured-repo notice: ${err instanceof Error ? err.message : err}`,
+							);
+						});
+				}
 				return;
 			}
 
@@ -1432,7 +1512,7 @@ export class EdgeWorker extends EventEmitter {
 					undefined, // issueDescription
 					200, // maxTurns
 					undefined, // linearWorkspaceId
-					undefined, // skillContext
+					this.buildSkillSessionContext(repository, undefined, session),
 					"github", // sessionPlatform → uses githubMcpConfigs override
 				);
 
@@ -2100,7 +2180,7 @@ ${taskSection}`;
 					undefined, // issueDescription
 					200, // maxTurns
 					undefined, // linearWorkspaceId
-					undefined, // skillContext
+					this.buildSkillSessionContext(repository, undefined, session),
 					"gitlab", // sessionPlatform → uses githubMcpConfigs override
 				);
 
@@ -4077,7 +4157,7 @@ ${taskSection}`;
 			...new Set([
 				attachmentsDir,
 				...allRepoPaths,
-				...this.gitService.getGitMetadataDirectories(workspace.path),
+				...this.gitService.getGitMetadataDirectoriesForWorkspace(workspace),
 			]),
 		];
 
@@ -4438,9 +4518,7 @@ ${taskSection}`;
 					fullIssue.description || undefined, // Description tags can override label selectors
 					undefined, // maxTurns
 					linearWorkspaceId,
-					this.buildSkillSessionContext(primaryRepo, fullIssue),
-					"linear",
-					repositories.map((repo) => repo.repositoryPath),
+					this.buildSkillSessionContext(primaryRepo, fullIssue, session),
 				);
 
 			log.debug(
@@ -5140,13 +5218,21 @@ ${taskSection}`;
 	 * - the active repository's Cyrus config ID,
 	 * - the Linear team that owns the issue, and
 	 * - the Linear label IDs attached to the issue.
+	 *
+	 * The session's repo working-tree path(s) are also captured so that
+	 * repo-local skills (`<repoPath>/.claude/skills/*`) get unioned into the
+	 * resolved whitelist. When a `session` is provided its workspace is used to
+	 * resolve those paths (covering multi-repo sessions); otherwise the active
+	 * repository's path is used.
 	 */
 	private buildSkillSessionContext(
 		repository: RepositoryConfig,
 		fullIssue?: Issue,
+		session?: CyrusAgentSession,
 	): SkillSessionContext {
 		const context: SkillSessionContext = {
 			repositoryId: repository.id,
+			repoPaths: this.resolveSkillRepoPaths(repository, session),
 		};
 		if (fullIssue?.teamId) {
 			context.linearTeamId = fullIssue.teamId;
@@ -5158,6 +5244,29 @@ ${taskSection}`;
 			context.linearLabelIds = [...(fullIssue?.labelIds ?? [])];
 		}
 		return context;
+	}
+
+	/**
+	 * Resolve the repo working-tree path(s) whose `.claude/skills/` directories
+	 * should contribute to the skill whitelist for a session.
+	 *
+	 * - Multi-repo sessions: every sub-worktree in `workspace.repoPaths`.
+	 * - Single-repo / GitHub-mention sessions: the active repository's path.
+	 */
+	private resolveSkillRepoPaths(
+		repository: RepositoryConfig,
+		session?: CyrusAgentSession,
+	): string[] {
+		const repoPaths = session?.workspace?.repoPaths;
+		if (repoPaths) {
+			const paths = Object.values(repoPaths).filter(
+				(p): p is string => typeof p === "string" && p.length > 0,
+			);
+			if (paths.length > 0) {
+				return [...new Set(paths)];
+			}
+		}
+		return [repository.repositoryPath];
 	}
 
 	/**
@@ -6044,6 +6153,7 @@ ${taskSection}`;
 		const skillsContext = this.buildSkillSessionContext(
 			repositories[0]!,
 			input.fullIssue,
+			input.session,
 		);
 		systemPrompt += await this.skillsPluginResolver.buildSkillsGuidance(
 			undefined,
@@ -6309,6 +6419,7 @@ ${input.userComment}
 		const plugins = await this.skillsPluginResolver.resolve();
 		const resolvedSkillContext: SkillSessionContext = skillContext ?? {
 			repositoryId: repository.id,
+			repoPaths: this.resolveSkillRepoPaths(repository, session),
 		};
 		const allowedSkillNames =
 			await this.skillsPluginResolver.discoverSkillNames(
@@ -7074,7 +7185,9 @@ ${input.userComment}
 				attachmentsDir,
 				repository.repositoryPath,
 				...additionalAllowedDirectories,
-				...this.gitService.getGitMetadataDirectories(session.workspace.path),
+				...this.gitService.getGitMetadataDirectoriesForWorkspace(
+					session.workspace,
+				),
 			]),
 		];
 
@@ -7109,7 +7222,7 @@ ${input.userComment}
 				fullIssue.description || undefined, // Description tags can override label selectors
 				maxTurns, // Pass maxTurns if specified
 				resolvedWorkspaceId,
-				this.buildSkillSessionContext(repository, fullIssue),
+				this.buildSkillSessionContext(repository, fullIssue, session),
 			);
 
 		// Create the appropriate runner based on session state
