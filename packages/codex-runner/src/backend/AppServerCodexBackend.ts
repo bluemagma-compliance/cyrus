@@ -1,23 +1,22 @@
 import { EventEmitter } from "node:events";
 import type { CodexConfigOverrides } from "../types.js";
-import {
-	AppServerClient,
-	type AppServerClientFactory,
-	type IAppServerClient,
-} from "./appServerClient.js";
+import type { AppServerClientFactory } from "./appServerClient.js";
 import {
 	type AppServerNotification,
 	translateAppServerItem,
 } from "./appServerEvents.js";
-import { resolveCodexAppServerLaunch } from "./codexBinary.js";
+import {
+	AppServerProcessManager,
+	type AppServerProcessLease,
+	type AppServerThreadHandler,
+	defaultAppServerProcessManager,
+} from "./appServerProcess.js";
 import type {
 	CodexBackend,
 	CodexUserInput,
 	NormalizedUsage,
 	ResolvedCodexConfig,
 } from "./types.js";
-
-const CLIENT_INFO = { name: "cyrus-codex-runner", version: "1.0.0" };
 
 interface ThreadStartResult {
 	thread?: { id?: string };
@@ -28,9 +27,10 @@ interface TurnStartResult {
 }
 
 /**
- * Backend that drives Codex through the persistent `codex app-server` JSON-RPC
- * protocol. The process stays alive across turns and supports injecting input
- * into an active turn via `turn/steer` ({@link supportsSteer} is true).
+ * Backend that drives one Codex app-server thread over the process-wide shared
+ * JSON-RPC connection. The app-server process is shared; this class owns only
+ * per-thread state and supports injecting input into an active turn via
+ * `turn/steer` ({@link supportsSteer} is true).
  */
 export class AppServerCodexBackend
 	extends EventEmitter
@@ -38,7 +38,7 @@ export class AppServerCodexBackend
 {
 	readonly supportsSteer = true;
 
-	private client: IAppServerClient | null = null;
+	private appServer: AppServerProcessLease | null = null;
 	private threadId: string | null = null;
 	private activeTurnId: string | null = null;
 	private turnActive = false;
@@ -57,64 +57,65 @@ export class AppServerCodexBackend
 	/** Watchdog: fails a turn that goes fully silent for too long. */
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private readonly turnIdleTimeoutMs: number;
-	private readonly requestTimeoutMs: number | undefined;
+	private readonly processManager: AppServerProcessManager;
+	private readonly threadHandler: AppServerThreadHandler = {
+		onNotification: (method, params) =>
+			this.onNotification(method as AppServerNotification, params),
+		onProcessGone: () => this.onProcessGone(),
+		onProcessError: (error) => this.onProcessError(error),
+	};
 
 	/**
-	 * @param clientFactory Overridable transport factory (tests inject a fake to
-	 * avoid spawning a process). Defaults to the real {@link AppServerClient}.
+	 * @param processManagerOrFactory Overridable shared process manager. Tests may
+	 * still pass the older client factory shape; it is wrapped in an isolated
+	 * manager for compatibility.
 	 * @param options.turnIdleTimeoutMs Fail an in-flight turn if the app-server
 	 * emits no notifications for this long (default 5min; Codex streams
 	 * continuously, so prolonged silence means a wedged turn). 0 disables it.
-	 * @param options.requestTimeoutMs Forwarded to the client for control-plane
-	 * request timeouts.
+	 * @param options.requestTimeoutMs Forwarded when wrapping a test client factory.
 	 */
 	constructor(
-		private readonly clientFactory: AppServerClientFactory = (options) =>
-			new AppServerClient(options),
+		processManagerOrFactory:
+			| AppServerProcessManager
+			| AppServerClientFactory = defaultAppServerProcessManager,
 		options?: { turnIdleTimeoutMs?: number; requestTimeoutMs?: number },
 	) {
 		super();
+		this.processManager =
+			typeof processManagerOrFactory === "function"
+				? new AppServerProcessManager(processManagerOrFactory, {
+						...(options?.requestTimeoutMs !== undefined
+							? { requestTimeoutMs: options.requestTimeoutMs }
+							: {}),
+						idleCloseMs: 0,
+					})
+				: processManagerOrFactory;
 		this.turnIdleTimeoutMs = options?.turnIdleTimeoutMs ?? 300_000;
-		this.requestTimeoutMs = options?.requestTimeoutMs;
 	}
 
 	async open(config: ResolvedCodexConfig): Promise<{ threadId: string }> {
 		this.outputSchema = config.outputSchema;
-		const { command, args } = resolveCodexAppServerLaunch(config.codexPath);
-		const client = this.clientFactory({
-			binaryPath: command,
-			args,
-			...(config.env ? { env: config.env } : {}),
-			...(this.requestTimeoutMs !== undefined
-				? { requestTimeoutMs: this.requestTimeoutMs }
-				: {}),
-		});
-		this.client = client;
+		const appServer = await this.processManager.acquire(config);
+		this.appServer = appServer;
 
-		client.setNotificationHandler((method, params) =>
-			this.onNotification(method as AppServerNotification, params),
-		);
-		client.setServerRequestHandler((method) => this.onServerRequest(method));
-		client.on("exit", () => this.onProcessGone());
-		client.on("error", (err) => this.onProcessError(err));
-		client.start();
+		try {
+			const threadId = config.resumeSessionId
+				? await this.resumeThread(config)
+				: await this.startThread(config);
 
-		await client.request("initialize", {
-			clientInfo: CLIENT_INFO,
-			capabilities: { experimentalApi: true },
-		});
-
-		const threadId = config.resumeSessionId
-			? await this.resumeThread(config)
-			: await this.startThread(config);
-
-		this.threadId = threadId;
-		this.emit("event", { kind: "thread-started", threadId });
-		return { threadId };
+			this.threadId = threadId;
+			appServer.registerThread(threadId, this.threadHandler);
+			this.emit("event", { kind: "thread-started", threadId });
+			return { threadId };
+		} catch (error) {
+			this.appServer = null;
+			appServer.release();
+			throw error;
+		}
 	}
 
 	async runTurn(input: CodexUserInput[]): Promise<void> {
-		if (!this.client || !this.threadId) {
+		if (!this.appServer || !this.threadId) {
 			throw new Error("AppServerCodexBackend.runTurn called before open()");
 		}
 		const turnPromise = new Promise<void>((resolve, reject) => {
@@ -125,13 +126,16 @@ export class AppServerCodexBackend
 		this.armIdleWatchdog();
 
 		try {
-			const result = await this.client.request<TurnStartResult>("turn/start", {
-				threadId: this.threadId,
-				input: this.toProtocolInput(input),
-				...(this.outputSchema !== undefined
-					? { outputSchema: this.outputSchema }
-					: {}),
-			});
+			const result = await this.appServer.request<TurnStartResult>(
+				"turn/start",
+				{
+					threadId: this.threadId,
+					input: this.toProtocolInput(input),
+					...(this.outputSchema !== undefined
+						? { outputSchema: this.outputSchema }
+						: {}),
+				},
+			);
 			this.activeTurnId = result?.turn?.id ?? this.activeTurnId;
 			// NOTE: the turn is not steerable the instant turn/start returns — the
 			// server only accepts turn/steer once it has emitted the `turn/started`
@@ -148,13 +152,13 @@ export class AppServerCodexBackend
 	}
 
 	async steer(input: CodexUserInput[]): Promise<void> {
-		if (!this.client || !this.threadId) {
+		if (!this.appServer || !this.threadId) {
 			throw new Error("AppServerCodexBackend.steer called before open()");
 		}
 		if (!this.turnActive || !this.activeTurnId) {
 			throw new Error("Cannot steer: no active turn");
 		}
-		await this.client.request("turn/steer", {
+		await this.appServer.request("turn/steer", {
 			threadId: this.threadId,
 			expectedTurnId: this.activeTurnId,
 			input: this.toProtocolInput(input),
@@ -169,11 +173,11 @@ export class AppServerCodexBackend
 	}
 
 	async interrupt(): Promise<void> {
-		if (!this.client || !this.threadId || !this.activeTurnId) {
+		if (!this.appServer || !this.threadId || !this.activeTurnId) {
 			return;
 		}
 		try {
-			await this.client.request("turn/interrupt", {
+			await this.appServer.request("turn/interrupt", {
 				threadId: this.threadId,
 				turnId: this.activeTurnId,
 			});
@@ -183,16 +187,28 @@ export class AppServerCodexBackend
 	}
 
 	async close(): Promise<void> {
-		const client = this.client;
-		this.client = null;
+		const appServer = this.appServer;
+		const threadId = this.threadId;
+		const turnId = this.activeTurnId;
+		this.appServer = null;
+		this.threadId = null;
+		this.activeTurnId = null;
+		if (appServer && threadId && turnId) {
+			void appServer
+				.request("turn/interrupt", { threadId, turnId })
+				.catch(() => undefined);
+		}
+		if (appServer && threadId) {
+			appServer.unregisterThread(threadId, this.threadHandler);
+		}
 		this.settleTurn(new Error("app-server backend closed"));
-		await client?.close();
+		appServer?.release();
 	}
 
 	// ---- Thread setup -------------------------------------------------------
 
 	private async startThread(config: ResolvedCodexConfig): Promise<string> {
-		const result = await this.client?.request<ThreadStartResult>(
+		const result = await this.appServer?.request<ThreadStartResult>(
 			"thread/start",
 			this.threadOptionsParams(config),
 		);
@@ -204,7 +220,7 @@ export class AppServerCodexBackend
 	}
 
 	private async resumeThread(config: ResolvedCodexConfig): Promise<string> {
-		const result = await this.client?.request<ThreadStartResult>(
+		const result = await this.appServer?.request<ThreadStartResult>(
 			"thread/resume",
 			{
 				threadId: config.resumeSessionId,
@@ -338,18 +354,6 @@ export class AppServerCodexBackend
 			this.emit("event", { kind: "turn-completed", usage: this.lastUsage });
 		}
 		this.settleTurn();
-	}
-
-	private onServerRequest(method: string): unknown {
-		// With approvalPolicy="never" the server should not ask for approvals;
-		// respond defensively so a stray request can never wedge a turn.
-		if (/auth/i.test(method)) {
-			return { chatgptAuthToken: null };
-		}
-		if (/approval/i.test(method)) {
-			return { decision: "accept" };
-		}
-		return {};
 	}
 
 	private readUsage(params: Record<string, unknown>): NormalizedUsage {

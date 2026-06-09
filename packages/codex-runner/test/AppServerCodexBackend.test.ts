@@ -10,6 +10,7 @@ import {
 	type NotificationHandler,
 	type ServerRequestHandler,
 } from "../src/backend/appServerClient.js";
+import { AppServerProcessManager } from "../src/backend/appServerProcess.js";
 import type {
 	NormalizedCodexEvent,
 	ResolvedCodexConfig,
@@ -22,7 +23,9 @@ class FakeClient extends EventEmitter implements IAppServerClient {
 	notificationHandler: NotificationHandler | null = null;
 	serverRequestHandler: ServerRequestHandler | null = null;
 	requests: { method: string; params: unknown }[] = [];
-	responses: Record<string, unknown> = {
+	startCalls = 0;
+	closeCalls = 0;
+	responses: Record<string, unknown | ((params: unknown) => unknown)> = {
 		initialize: {},
 		"thread/start": { thread: { id: "thread-1" } },
 		"thread/resume": { thread: { id: "thread-resumed" } },
@@ -37,12 +40,18 @@ class FakeClient extends EventEmitter implements IAppServerClient {
 	setServerRequestHandler(handler: ServerRequestHandler): void {
 		this.serverRequestHandler = handler;
 	}
-	start(): void {}
+	start(): void {
+		this.startCalls += 1;
+	}
 	request<T = unknown>(method: string, params: unknown): Promise<T> {
 		this.requests.push({ method, params });
-		return Promise.resolve((this.responses[method] ?? {}) as T);
+		const response = this.responses[method];
+		return Promise.resolve(
+			(typeof response === "function" ? response(params) : (response ?? {})) as T,
+		);
 	}
 	close(): Promise<void> {
+		this.closeCalls += 1;
 		return Promise.resolve();
 	}
 	push(method: string, params: unknown): void {
@@ -209,6 +218,7 @@ describe("AppServerCodexBackend", () => {
 				.sandboxPolicy,
 		).toBeUndefined();
 		client.push("turn/completed", {
+			threadId: "thread-1",
 			turn: { id: "turn-1", status: "completed" },
 		});
 		await turnDone;
@@ -229,6 +239,7 @@ describe("AppServerCodexBackend", () => {
 				.outputSchema,
 		).toEqual(schema);
 		client.push("turn/completed", {
+			threadId: "thread-1",
 			turn: { id: "turn-1", status: "completed" },
 		});
 		await turnDone;
@@ -250,6 +261,9 @@ describe("AppServerCodexBackend", () => {
 		const { backend, client } = makeBackend();
 		const events: NormalizedCodexEvent[] = [];
 		backend.on("event", (e) => events.push(e));
+		client.responses["thread/start"] = {
+			thread: { id: "019e94f0-5c4d-7661-af4a-dc427d3cd624" },
+		};
 
 		await backend.open({ ...baseConfig, codexPath: "/bin/true" });
 		const turnDone = backend.runTurn([{ type: "text", text: "do it" }]);
@@ -299,6 +313,7 @@ describe("AppServerCodexBackend", () => {
 		});
 
 		client.push("turn/completed", {
+			threadId: "thread-1",
 			turn: { id: "turn-1", status: "completed" },
 		});
 		await turnDone;
@@ -329,37 +344,47 @@ describe("AppServerCodexBackend", () => {
 		// The runner is signalled to flush buffered follow-ups only once the
 		// server confirms the turn is steerable via the turn/started notification.
 		expect(events.some((e) => e.kind === "turn-started")).toBe(false);
-		client.push("turn/started", { turn: { id: "turn-1" } });
+		client.push("turn/started", {
+			threadId: "thread-1",
+			turn: { id: "turn-1" },
+		});
 		expect(events.some((e) => e.kind === "turn-started")).toBe(true);
 
 		client.push("turn/completed", {
+			threadId: "thread-1",
 			turn: { id: "turn-1", status: "completed" },
 		});
 		await turnDone;
 		expect(backend.isTurnActive()).toBe(false);
 	});
 
-	it("keeps concurrent backend instances fully isolated", async () => {
-		// Two backends running at once must not share thread/turn state. Each gets
-		// its own client (own threadId); steering one must target only that one.
-		const clientA = new FakeClient();
-		clientA.responses["thread/start"] = { thread: { id: "thread-A" } };
-		clientA.responses["turn/start"] = { turn: { id: "turn-A" } };
-		const clientB = new FakeClient();
-		clientB.responses["thread/start"] = { thread: { id: "thread-B" } };
-		clientB.responses["turn/start"] = { turn: { id: "turn-B" } };
-
-		const backendA = new AppServerCodexBackend(() => clientA);
-		const backendB = new AppServerCodexBackend(() => clientB);
+	it("shares one app-server client while keeping concurrent threads isolated", async () => {
+		// Two backends running at once must share one app-server process/client,
+		// but keep per-thread state isolated through threadId routing.
+		const client = new FakeClient();
+		let nextThread = 0;
+		client.responses["thread/start"] = () => {
+			nextThread += 1;
+			return { thread: { id: nextThread === 1 ? "thread-A" : "thread-B" } };
+		};
+		client.responses["turn/start"] = (params) => {
+			const threadId = (params as { threadId?: string }).threadId;
+			return { turn: { id: threadId === "thread-A" ? "turn-A" : "turn-B" } };
+		};
+		const manager = new AppServerProcessManager(() => client, { idleCloseMs: 0 });
+		const backendA = new AppServerCodexBackend(manager);
+		const backendB = new AppServerCodexBackend(manager);
 		const eventsA: NormalizedCodexEvent[] = [];
 		const eventsB: NormalizedCodexEvent[] = [];
 		backendA.on("event", (e) => eventsA.push(e));
 		backendB.on("event", (e) => eventsB.push(e));
 
-		await Promise.all([
-			backendA.open({ ...baseConfig, codexPath: "/bin/true" }),
-			backendB.open({ ...baseConfig, codexPath: "/bin/true" }),
-		]);
+		await backendA.open({ ...baseConfig, codexPath: "/bin/true" });
+		await backendB.open({ ...baseConfig, codexPath: "/bin/true" });
+		expect(client.startCalls).toBe(1);
+		expect(client.requests.filter((r) => r.method === "initialize")).toHaveLength(
+			1,
+		);
 
 		const turnA = backendA.runTurn([{ type: "text", text: "A" }]);
 		const turnB = backendB.runTurn([{ type: "text", text: "B" }]);
@@ -369,35 +394,39 @@ describe("AppServerCodexBackend", () => {
 		await backendA.steer([{ type: "text", text: "steer-A" }]);
 		await backendB.steer([{ type: "text", text: "steer-B" }]);
 
-		expect(clientA.lastRequest("turn/steer")?.params).toMatchObject({
+		const steerRequests = client.requests.filter(
+			(r) => r.method === "turn/steer",
+		);
+		expect(steerRequests[0]?.params).toMatchObject({
 			threadId: "thread-A",
 			expectedTurnId: "turn-A",
 			input: [{ type: "text", text: "steer-A" }],
 		});
-		expect(clientB.lastRequest("turn/steer")?.params).toMatchObject({
+		expect(steerRequests[1]?.params).toMatchObject({
 			threadId: "thread-B",
 			expectedTurnId: "turn-B",
 			input: [{ type: "text", text: "steer-B" }],
 		});
-		// No B request ever hit client A and vice versa.
-		expect(clientA.requests.some((r) => r.method === "turn/steer")).toBe(true);
-		expect(
-			clientA.requests.filter((r) => r.method === "turn/steer"),
-		).toHaveLength(1);
+		expect(steerRequests).toHaveLength(2);
 
 		// Completing A must not resolve B.
-		clientA.push("turn/completed", {
+		client.push("turn/completed", {
+			threadId: "thread-A",
 			turn: { id: "turn-A", status: "completed" },
 		});
 		await turnA;
 		expect(backendA.isTurnActive()).toBe(false);
 		expect(backendB.isTurnActive()).toBe(true);
 
-		clientB.push("turn/completed", {
+		client.push("turn/completed", {
+			threadId: "thread-B",
 			turn: { id: "turn-B", status: "completed" },
 		});
 		await turnB;
 		expect(backendB.isTurnActive()).toBe(false);
+
+		await Promise.all([backendA.close(), backendB.close()]);
+		expect(client.closeCalls).toBe(1);
 	});
 
 	it("emits turn-failed when the turn completes with failed status", async () => {
@@ -409,6 +438,7 @@ describe("AppServerCodexBackend", () => {
 		await Promise.resolve();
 
 		client.push("turn/completed", {
+			threadId: "thread-1",
 			turn: { id: "turn-1", status: "failed", error: { message: "boom" } },
 		});
 		await turnDone;
@@ -474,6 +504,7 @@ describe("AppServerCodexBackend", () => {
 			// Activity at 800ms resets the 1000ms watchdog...
 			vi.advanceTimersByTime(800);
 			client.push("item/started", {
+				threadId: "thread-1",
 				item: { type: "reasoning", id: "r1" },
 			});
 			// ...so 800ms more is still under the budget (no failure yet).
@@ -482,6 +513,7 @@ describe("AppServerCodexBackend", () => {
 
 			// Complete the turn cleanly so the test resolves.
 			client.push("turn/completed", {
+				threadId: "thread-1",
 				turn: { id: "turn-1", status: "completed" },
 			});
 			await turnDone;
