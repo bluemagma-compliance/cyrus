@@ -44,11 +44,10 @@ backend.on("event", async (e) => {
 });
 
 const config = {
-  sandbox: "read-only",
+  sandbox: { mode: "read-only", writableRoots: [], networkAccess: false },
   approvalPolicy: "never",
   skipGitRepoCheck: true,
   workingDirectory: workdir,
-  additionalDirectories: [],
   codexHome: join(process.env.HOME, ".codex"),
 };
 

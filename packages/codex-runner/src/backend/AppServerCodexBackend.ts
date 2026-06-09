@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import type { SandboxMode } from "@openai/codex-sdk";
 import type { CodexConfigOverrides } from "../types.js";
 import {
 	AppServerClient,
@@ -13,11 +12,9 @@ import {
 import { resolveCodexBinary } from "./codexBinary.js";
 import type {
 	CodexBackend,
-	CodexSandboxPolicy,
 	CodexUserInput,
 	NormalizedUsage,
 	ResolvedCodexConfig,
-	ResolvedCodexSandbox,
 } from "./types.js";
 
 const CLIENT_INFO = { name: "cyrus-codex-runner", version: "1.0.0" };
@@ -52,8 +49,6 @@ export class AppServerCodexBackend
 	};
 	/** Structured-output schema for turns, captured at open() for turn/start. */
 	private outputSchema: unknown;
-	/** Resolved sandbox decision, captured at open() for thread/turn params. */
-	private sandbox: ResolvedCodexSandbox | null = null;
 
 	/** Resolver for the in-flight {@link runTurn} promise. */
 	private turnResolve: (() => void) | null = null;
@@ -85,7 +80,6 @@ export class AppServerCodexBackend
 
 	async open(config: ResolvedCodexConfig): Promise<{ threadId: string }> {
 		this.outputSchema = config.outputSchema;
-		this.sandbox = config.sandbox;
 		const binaryPath = resolveCodexBinary(config.codexPath);
 		const client = this.clientFactory({
 			binaryPath,
@@ -130,17 +124,12 @@ export class AppServerCodexBackend
 		this.armIdleWatchdog();
 
 		try {
-			const sandboxPolicy =
-				this.sandbox?.kind === "policy"
-					? this.toWireSandboxPolicy(this.sandbox.policy)
-					: undefined;
 			const result = await this.client.request<TurnStartResult>("turn/start", {
 				threadId: this.threadId,
 				input: this.toProtocolInput(input),
 				...(this.outputSchema !== undefined
 					? { outputSchema: this.outputSchema }
 					: {}),
-				...(sandboxPolicy ? { sandboxPolicy } : {}),
 			});
 			this.activeTurnId = result?.turn?.id ?? this.activeTurnId;
 			// NOTE: the turn is not steerable the instant turn/start returns — the
@@ -228,13 +217,17 @@ export class AppServerCodexBackend
 	private threadOptionsParams(
 		config: ResolvedCodexConfig,
 	): Record<string, unknown> {
+		const sandbox = config.sandbox;
+		// `sandbox` (coarse mode) and `permissions` (named profile) are mutually
+		// exclusive on thread/start; pick exactly one based on the resolved arm.
+		const sandboxParams =
+			sandbox.kind === "profile"
+				? { permissions: sandbox.profileId }
+				: { sandbox: sandbox.mode };
 		return {
 			...(config.workingDirectory ? { cwd: config.workingDirectory } : {}),
 			approvalPolicy: config.approvalPolicy,
-			// thread/start takes only the coarse mode; the granular `policy` arm is
-			// applied via `turn/start.sandboxPolicy` (so we send a matching baseline
-			// mode here and let the turn policy refine it).
-			sandbox: this.threadSandboxMode(config.sandbox),
+			...sandboxParams,
 			...(config.model ? { model: config.model } : {}),
 			...(config.developerInstructions
 				? { developerInstructions: config.developerInstructions }
@@ -243,73 +236,38 @@ export class AppServerCodexBackend
 		};
 	}
 
-	/** Coarse `thread/start.sandbox` mode for the resolved sandbox. */
-	private threadSandboxMode(sandbox: ResolvedCodexSandbox): SandboxMode {
-		if (sandbox.kind === "workspace-mode") {
-			return sandbox.mode;
-		}
-		switch (sandbox.policy.type) {
-			case "dangerFullAccess":
-				return "danger-full-access";
-			case "readOnly":
-				return "read-only";
-			default:
-				return "workspace-write";
-		}
-	}
-
 	/**
-	 * Build the free-form Codex `config` for thread/start. For the coarse
-	 * `workspace-mode` sandbox the app-server has no `--add-dir` flag, so writable
-	 * roots + network are passed via `sandbox_workspace_write`. The granular
-	 * `policy` arm is governed entirely by `turn/start.sandboxPolicy`, so nothing
-	 * sandbox-related is added here. MCP servers etc. ride along in configOverrides.
+	 * Build the free-form Codex `config` for thread/start. The app-server has no
+	 * `--add-dir` flag, so:
+	 * - `workspace-mode`: writable roots + network ride on `sandbox_workspace_write`
+	 *   (only meaningful in workspace-write mode; omitted otherwise).
+	 * - `profile`: the granular permission profile body is registered under
+	 *   `permissions.<id>` and selected via the `permissions` thread param.
+	 * MCP servers etc. ride along in configOverrides.
 	 */
 	private buildThreadConfig(config: ResolvedCodexConfig): CodexConfigOverrides {
 		const base: CodexConfigOverrides = config.configOverrides
 			? { ...config.configOverrides }
 			: {};
+		const sandbox = config.sandbox;
 
-		if (config.sandbox.kind === "workspace-mode") {
+		if (sandbox.kind === "profile") {
+			base.permissions = {
+				[sandbox.profileId]: {
+					filesystem: { ...sandbox.filesystem },
+					network: { enabled: sandbox.networkAccess },
+				},
+			};
+		} else if (sandbox.mode === "workspace-write") {
 			base.sandbox_workspace_write = {
-				network_access: config.sandbox.networkAccess,
-				...(config.sandbox.writableRoots.length > 0
-					? { writable_roots: [...config.sandbox.writableRoots] }
+				network_access: sandbox.networkAccess,
+				...(sandbox.writableRoots.length > 0
+					? { writable_roots: [...sandbox.writableRoots] }
 					: {}),
 			};
 		}
 
 		return base;
-	}
-
-	/** Serialize a neutral {@link CodexSandboxPolicy} to the wire shape. */
-	private toWireSandboxPolicy(
-		policy: CodexSandboxPolicy,
-	): Record<string, unknown> {
-		const restrictedReads = (readableRoots: string[]) => ({
-			type: "restricted",
-			includePlatformDefaults: true,
-			readableRoots,
-		});
-		switch (policy.type) {
-			case "dangerFullAccess":
-				return { type: "dangerFullAccess" };
-			case "readOnly":
-				return {
-					type: "readOnly",
-					access: restrictedReads(policy.readableRoots),
-					networkAccess: policy.networkAccess,
-				};
-			default:
-				return {
-					type: "workspaceWrite",
-					writableRoots: policy.writableRoots,
-					readOnlyAccess: restrictedReads(policy.readableRoots),
-					networkAccess: policy.networkAccess,
-					excludeSlashTmp: false,
-					excludeTmpdirEnvVar: false,
-				};
-		}
 	}
 
 	private toProtocolInput(input: CodexUserInput[]): unknown[] {

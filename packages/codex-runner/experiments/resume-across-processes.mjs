@@ -11,11 +11,10 @@ const wd = mkdtempSync(join(tmpdir(), "codex-resume-it-"));
 execFileSync("git", ["init", "-q"], { cwd: wd });
 writeFileSync(join(wd, "README.md"), "# x\n");
 const config = {
-  sandbox: "read-only",
+  sandbox: { mode: "read-only", writableRoots: [], networkAccess: false },
   approvalPolicy: "never",
   skipGitRepoCheck: true,
   workingDirectory: wd,
-  additionalDirectories: [],
   codexHome: join(process.env.HOME, ".codex"),
 };
 

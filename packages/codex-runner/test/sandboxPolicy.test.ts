@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveCodexSandbox } from "../src/config/sandboxPolicy.js";
+import {
+	CYRUS_SANDBOX_PROFILE_ID,
+	resolveCodexSandbox,
+} from "../src/config/sandboxPolicy.js";
 
 describe("resolveCodexSandbox", () => {
 	it("returns a workspace-mode (broad reads) when no sandbox settings are given", () => {
@@ -18,7 +21,7 @@ describe("resolveCodexSandbox", () => {
 		});
 	});
 
-	it("builds a granular workspaceWrite policy from sandbox settings", () => {
+	it("builds a read-restricted permission profile from sandbox settings", () => {
 		expect(
 			resolveCodexSandbox({
 				mode: "workspace-write",
@@ -26,42 +29,50 @@ describe("resolveCodexSandbox", () => {
 				writableRoots: ["/repo/b"],
 				networkAccess: false,
 				sandboxSettings: {
-					allowWrite: ["/repo/out"],
-					allowRead: ["/usr/lib"],
+					allowWrite: ["/repo/a", "/repo/out"],
+					allowRead: ["/repo/a", "/usr/lib"],
 					denyRead: ["/home/secrets"], // honored by omission
 				},
 			}),
 		).toEqual({
-			kind: "policy",
-			policy: {
-				type: "workspaceWrite",
-				writableRoots: ["/repo/a", "/repo/b", "/repo/out"],
-				// readable = writable ∪ allowRead; denyRead is simply absent
-				readableRoots: ["/repo/a", "/repo/b", "/repo/out", "/usr/lib"],
-				networkAccess: false,
+			kind: "profile",
+			profileId: CYRUS_SANDBOX_PROFILE_ID,
+			networkAccess: false,
+			filesystem: {
+				":minimal": "read",
+				":workspace_roots": "write", // the worktree (cwd)
+				":tmpdir": "write",
+				":slash_tmp": "write",
+				"/repo/b": "write", // extra writable root
+				"/repo/out": "write", // allowWrite (beyond cwd)
+				"/usr/lib": "read", // allowRead (not already writable)
 			},
 		});
 	});
 
-	it("maps read-only mode to a readOnly policy when settings are present", () => {
-		const r = resolveCodexSandbox({
-			mode: "read-only",
-			workingDirectory: "/repo/a",
-			writableRoots: [],
-			networkAccess: true,
-			sandboxSettings: { allowRead: ["/repo/a"] },
-		});
-		expect(r).toEqual({
-			kind: "policy",
-			policy: {
-				type: "readOnly",
-				readableRoots: ["/repo/a"],
+	it("maps read-only mode to a read-only worktree in the profile", () => {
+		expect(
+			resolveCodexSandbox({
+				mode: "read-only",
+				workingDirectory: "/repo/a",
+				writableRoots: [],
 				networkAccess: true,
+				sandboxSettings: { allowRead: ["/repo/a"] },
+			}),
+		).toEqual({
+			kind: "profile",
+			profileId: CYRUS_SANDBOX_PROFILE_ID,
+			networkAccess: true,
+			filesystem: {
+				":minimal": "read",
+				":workspace_roots": "read",
+				":tmpdir": "write",
+				":slash_tmp": "write",
 			},
 		});
 	});
 
-	it("maps danger-full-access to a dangerFullAccess policy", () => {
+	it("maps danger-full-access to an unrestricted profile", () => {
 		expect(
 			resolveCodexSandbox({
 				mode: "danger-full-access",
@@ -69,24 +80,33 @@ describe("resolveCodexSandbox", () => {
 				networkAccess: true,
 				sandboxSettings: {},
 			}),
-		).toEqual({ kind: "policy", policy: { type: "dangerFullAccess" } });
+		).toEqual({
+			kind: "profile",
+			profileId: CYRUS_SANDBOX_PROFILE_ID,
+			networkAccess: true,
+			filesystem: { ":root": "write" },
+		});
 	});
 
 	it("drops non-absolute and empty paths", () => {
-		const r = resolveCodexSandbox({
-			mode: "workspace-write",
-			workingDirectory: "/repo/a",
-			writableRoots: ["relative/path", ""],
-			networkAccess: true,
-			sandboxSettings: { allowRead: ["also/relative", "/ok/read"] },
-		});
-		expect(r).toEqual({
-			kind: "policy",
-			policy: {
-				type: "workspaceWrite",
-				writableRoots: ["/repo/a"],
-				readableRoots: ["/repo/a", "/ok/read"],
+		expect(
+			resolveCodexSandbox({
+				mode: "workspace-write",
+				workingDirectory: "/repo/a",
+				writableRoots: ["relative/path", ""],
 				networkAccess: true,
+				sandboxSettings: { allowRead: ["also/relative", "/ok/read"] },
+			}),
+		).toEqual({
+			kind: "profile",
+			profileId: CYRUS_SANDBOX_PROFILE_ID,
+			networkAccess: true,
+			filesystem: {
+				":minimal": "read",
+				":workspace_roots": "write",
+				":tmpdir": "write",
+				":slash_tmp": "write",
+				"/ok/read": "read",
 			},
 		});
 	});

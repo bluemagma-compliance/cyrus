@@ -82,29 +82,21 @@ export type CodexUserInput =
 	| { type: "text"; text: string }
 	| { type: "local_image"; path: string };
 
-/**
- * Transport-neutral sandbox policy. Mirrors the subset of the app-server
- * `SandboxPolicy` Cyrus uses; the backend adds the wire-specific constants
- * (`includePlatformDefaults`, `excludeSlashTmp`, etc.) when serializing. Reads
- * are an allow-list (`readableRoots`) — anything outside is denied.
- */
-export type CodexSandboxPolicy =
-	| { type: "dangerFullAccess" }
-	| { type: "readOnly"; readableRoots: string[]; networkAccess: boolean }
-	| {
-			type: "workspaceWrite";
-			writableRoots: string[];
-			readableRoots: string[];
-			networkAccess: boolean;
-	  };
+/** A single filesystem access grant in a Codex permission profile. */
+export type CodexFileSystemAccess = "read" | "write" | "deny";
 
 /**
  * Resolved per-thread sandbox decision.
  * - `workspace-mode`: the coarse Codex sandbox mode (broad reads, writes limited
  *   to cwd + `writableRoots` + tmp). The default when there are no explicit Cyrus
- *   sandbox settings — sent via `thread/start.sandbox` + config.
- * - `policy`: a granular structured policy (restricted reads) derived from Cyrus
- *   sandbox settings — sent via `turn/start.sandboxPolicy` (persists per-thread).
+ *   sandbox settings — sent via `thread/start.sandbox` + `config.sandbox_workspace_write`.
+ * - `profile`: a granular per-thread permission profile (restricted reads) derived
+ *   from Cyrus sandbox settings. `filesystem` is a flattened map of path →
+ *   read/write/deny, where keys are either absolute paths or Codex special-path
+ *   tokens (`:minimal` = platform defaults, `:workspace_roots` = cwd/worktree,
+ *   `:tmpdir`, `:slash_tmp`). Sent via `thread/start.permissions` (the profile id)
+ *   + `config.permissions.<id>` (the profile body); the profile persists per-thread
+ *   and cannot be combined with `thread/start.sandbox`.
  */
 export type ResolvedCodexSandbox =
 	| {
@@ -113,7 +105,12 @@ export type ResolvedCodexSandbox =
 			writableRoots: string[];
 			networkAccess: boolean;
 	  }
-	| { kind: "policy"; policy: CodexSandboxPolicy };
+	| {
+			kind: "profile";
+			profileId: string;
+			filesystem: Record<string, CodexFileSystemAccess>;
+			networkAccess: boolean;
+	  };
 
 /**
  * Fully-resolved, transport-neutral run configuration produced by

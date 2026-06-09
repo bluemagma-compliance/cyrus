@@ -466,8 +466,8 @@ export class RunnerConfigBuilder {
 		// When the egress sandbox is enabled, give Codex the same filesystem
 		// posture Claude gets (see buildSandboxConfig): writes restricted to the
 		// worktree, reads restricted to the worktree + allowed directories (home
-		// is denied by omission — Codex reads are an allow-list). The Codex runner
-		// turns this into a per-thread app-server sandbox policy.
+		// is denied by omission). The Codex runner turns this into a per-thread
+		// app-server permission profile (read/write allow-list).
 		if (runnerType === "codex" && input.sandboxSettings) {
 			config.sandboxSettings = {
 				allowWrite: [input.session.workspace.path],

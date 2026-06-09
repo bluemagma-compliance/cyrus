@@ -70,7 +70,9 @@ function buildCodexConfig(sandboxSettings?: Record<string, unknown>) {
 }
 
 describe("RunnerConfigBuilder Codex sandbox plumbing", () => {
-	it("translates the egress sandbox into a Codex filesystem policy", () => {
+	it("translates the egress sandbox into a Codex filesystem allow-list", () => {
+		// Plumbs both write (worktree) and read (worktree + allowed dirs) roots;
+		// the Codex runner turns these into a per-thread permission profile.
 		const config = buildCodexConfig({ enabled: true });
 		expect(config.sandboxSettings).toEqual({
 			allowWrite: ["/ws/root"],

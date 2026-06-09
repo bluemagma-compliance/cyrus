@@ -126,61 +126,88 @@ describe("AppServerCodexBackend", () => {
 		});
 		const params = client.lastRequest("thread/start")?.params as {
 			sandbox?: string;
+			permissions?: string;
 			config?: { sandbox_workspace_write?: Record<string, unknown> };
 		};
 		expect(params.sandbox).toBe("workspace-write");
+		expect(params.permissions).toBeUndefined();
 		expect(params.config?.sandbox_workspace_write).toEqual({
 			network_access: false,
 			writable_roots: ["/repo/b", "/repo/c"],
 		});
 	});
 
-	it("serializes a policy sandbox to turn/start sandboxPolicy (restricted reads + platform defaults)", async () => {
+	it("omits sandbox_workspace_write for non-workspace-write modes", async () => {
 		const { backend, client } = makeBackend();
 		await backend.open({
 			...baseConfig,
 			codexPath: "/bin/true",
 			sandbox: {
-				kind: "policy",
-				policy: {
-					type: "workspaceWrite",
-					writableRoots: ["/repo/a"],
-					readableRoots: ["/repo/a", "/usr/lib"],
-					networkAccess: false,
+				kind: "workspace-mode",
+				mode: "read-only",
+				writableRoots: [],
+				networkAccess: false,
+			},
+		});
+		const params = client.lastRequest("thread/start")?.params as {
+			sandbox?: string;
+			config?: { sandbox_workspace_write?: Record<string, unknown> };
+		};
+		expect(params.sandbox).toBe("read-only");
+		expect(params.config?.sandbox_workspace_write).toBeUndefined();
+	});
+
+	it("serializes a profile sandbox to thread/start permissions + config.permissions (not sandbox)", async () => {
+		const { backend, client } = makeBackend();
+		await backend.open({
+			...baseConfig,
+			codexPath: "/bin/true",
+			sandbox: {
+				kind: "profile",
+				profileId: "cyrus-sandbox",
+				networkAccess: false,
+				filesystem: {
+					":minimal": "read",
+					":workspace_roots": "write",
+					":tmpdir": "write",
+					":slash_tmp": "write",
+					"/usr/lib": "read",
 				},
 			},
 		});
-		// thread/start carries the matching coarse baseline mode...
-		expect(
-			(client.lastRequest("thread/start")?.params as { sandbox?: string })
-				.sandbox,
-		).toBe("workspace-write");
-		// ...and thread/start does NOT inject sandbox_workspace_write (turn governs).
-		expect(
-			(
-				client.lastRequest("thread/start")?.params as {
-					config?: Record<string, unknown>;
-				}
-			).config?.sandbox_workspace_write,
-		).toBeUndefined();
+		const params = client.lastRequest("thread/start")?.params as {
+			sandbox?: string;
+			permissions?: string;
+			config?: Record<string, unknown>;
+		};
+		// `permissions` and `sandbox` are mutually exclusive — only permissions is set.
+		expect(params.permissions).toBe("cyrus-sandbox");
+		expect(params.sandbox).toBeUndefined();
+		expect(params.config?.sandbox_workspace_write).toBeUndefined();
+		expect(params.config?.permissions).toEqual({
+			"cyrus-sandbox": {
+				filesystem: {
+					":minimal": "read",
+					":workspace_roots": "write",
+					":tmpdir": "write",
+					":slash_tmp": "write",
+					"/usr/lib": "read",
+				},
+				network: { enabled: false },
+			},
+		});
+	});
+
+	it("does not send a sandboxPolicy on turn/start (per-thread sandbox is set at thread/start)", async () => {
+		const { backend, client } = makeBackend();
+		await backend.open({ ...baseConfig, codexPath: "/bin/true" });
 
 		const turnDone = backend.runTurn([{ type: "text", text: "go" }]);
 		await Promise.resolve();
 		expect(
 			(client.lastRequest("turn/start")?.params as { sandboxPolicy?: unknown })
 				.sandboxPolicy,
-		).toEqual({
-			type: "workspaceWrite",
-			writableRoots: ["/repo/a"],
-			readOnlyAccess: {
-				type: "restricted",
-				includePlatformDefaults: true,
-				readableRoots: ["/repo/a", "/usr/lib"],
-			},
-			networkAccess: false,
-			excludeSlashTmp: false,
-			excludeTmpdirEnvVar: false,
-		});
+		).toBeUndefined();
 		client.push("turn/completed", {
 			turn: { id: "turn-1", status: "completed" },
 		});

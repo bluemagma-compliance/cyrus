@@ -24,14 +24,12 @@ backend.on("event", (e) => {
 });
 
 const config = {
-  sandbox: "workspace-write",
+  sandbox: { mode: "workspace-write", writableRoots: [wd], networkAccess: true },
   approvalPolicy: "never",
   skipGitRepoCheck: true,
   workingDirectory: wd,
-  additionalDirectories: [],
   codexHome: join(process.env.HOME, ".codex"),
   configOverrides: {
-    sandbox_workspace_write: { network_access: true },
     mcp_servers: { magic: { command: process.execPath, args: [serverPath], default_tools_approval_mode: "approve" } },
   },
 };

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -84,5 +85,18 @@ export function resolveCodexBinary(override?: string): string {
 
 	const archRoot = path.join(vendorRoot, targetTriple);
 	const codexBinaryName = platform === "win32" ? "codex.exe" : "codex";
-	return path.join(archRoot, "codex", codexBinaryName);
+	// The vendored binary location changed across Codex versions: newer builds
+	// (>=0.13x) ship it under `bin/`, older ones under `codex/`. Pick whichever
+	// exists so a version bump doesn't break resolution.
+	const candidates = [
+		path.join(archRoot, "bin", codexBinaryName),
+		path.join(archRoot, "codex", codexBinaryName),
+	];
+	const found = candidates.find((candidate) => existsSync(candidate));
+	if (!found) {
+		throw new Error(
+			`Unable to locate the Codex CLI binary under ${archRoot} (looked in bin/ and codex/).`,
+		);
+	}
+	return found;
 }
