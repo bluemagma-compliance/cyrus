@@ -9,7 +9,7 @@ import {
 	type AppServerNotification,
 	translateAppServerItem,
 } from "./appServerEvents.js";
-import { resolveCodexBinary } from "./codexBinary.js";
+import { resolveCodexAppServerLaunch } from "./codexBinary.js";
 import type {
 	CodexBackend,
 	CodexUserInput,
@@ -80,9 +80,10 @@ export class AppServerCodexBackend
 
 	async open(config: ResolvedCodexConfig): Promise<{ threadId: string }> {
 		this.outputSchema = config.outputSchema;
-		const binaryPath = resolveCodexBinary(config.codexPath);
+		const { command, args } = resolveCodexAppServerLaunch(config.codexPath);
 		const client = this.clientFactory({
-			binaryPath,
+			binaryPath: command,
+			args,
 			...(config.env ? { env: config.env } : {}),
 			...(this.requestTimeoutMs !== undefined
 				? { requestTimeoutMs: this.requestTimeoutMs }

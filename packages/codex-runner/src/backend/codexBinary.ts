@@ -1,102 +1,61 @@
-import { existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
 const CODEX_NPM_NAME = "@openai/codex";
-const CODEX_SDK_NPM_NAME = "@openai/codex-sdk";
+/** The `codex app-server` subcommand + transport flags shared by both launch modes. */
+const APP_SERVER_ARGS = ["app-server", "--listen", "stdio://"] as const;
 
-const PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
-	"x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-	"aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-	"x86_64-apple-darwin": "@openai/codex-darwin-x64",
-	"aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-	"x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-	"aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
-};
-
-function targetTripleFor(
-	platform: NodeJS.Platform,
-	arch: string,
-): string | null {
-	switch (platform) {
-		case "linux":
-		case "android":
-			if (arch === "x64") return "x86_64-unknown-linux-musl";
-			if (arch === "arm64") return "aarch64-unknown-linux-musl";
-			return null;
-		case "darwin":
-			if (arch === "x64") return "x86_64-apple-darwin";
-			if (arch === "arm64") return "aarch64-apple-darwin";
-			return null;
-		case "win32":
-			if (arch === "x64") return "x86_64-pc-windows-msvc";
-			if (arch === "arm64") return "aarch64-pc-windows-msvc";
-			return null;
-		default:
-			return null;
-	}
+/** How to launch a `codex app-server` process: a command + its full argv. */
+export interface CodexAppServerLaunch {
+	command: string;
+	args: string[];
 }
 
 /**
- * Resolve the path to the Codex CLI binary, mirroring the resolution the
- * `@openai/codex-sdk` performs internally. This ensures the app-server backend
- * spawns the SAME vendored binary the exec backend uses.
+ * Resolve how to launch `codex app-server`.
  *
- * @param override Explicit binary path (from config); returned as-is when set.
+ * The `@openai/codex-sdk` only exposes the high-level `Codex`/`Thread` API (no
+ * app-server transport, no `turn/steer`), and no getter for its bundled binary,
+ * so we drive the CLI ourselves. Rather than re-derive the platform→vendor
+ * binary path (a fragile coupling to the SDK's internal layout), we invoke the
+ * `@openai/codex` package's **public** `bin` launcher (`bin/codex.js`) via Node:
+ * that launcher owns the platform-package/vendor resolution and forwards stdio
+ * + termination signals to the native binary. We read its location from the
+ * package's own `package.json` `bin` entry, so a future vendor-layout change
+ * upstream costs us nothing.
+ *
+ * @param override Explicit Codex binary path (from config). When set, that
+ * binary is launched directly (no Node launcher) — mirrors the SDK's
+ * `codexPathOverride`.
  */
-export function resolveCodexBinary(override?: string): string {
+export function resolveCodexAppServerLaunch(
+	override?: string,
+): CodexAppServerLaunch {
 	if (override) {
-		return override;
+		return { command: override, args: [...APP_SERVER_ARGS] };
 	}
 
-	const { platform, arch } = process;
-	const targetTriple = targetTripleFor(platform, arch);
-	if (!targetTriple) {
-		throw new Error(`Unsupported platform: ${platform} (${arch})`);
-	}
-	const platformPackage = PLATFORM_PACKAGE_BY_TARGET[targetTriple];
-	if (!platformPackage) {
-		throw new Error(`Unsupported target triple: ${targetTriple}`);
-	}
-
-	let vendorRoot: string;
+	const require = createRequire(import.meta.url);
+	let packageJsonPath: string;
 	try {
-		// `@openai/codex` is a dependency of `@openai/codex-sdk`, not of this
-		// package, so resolve it via the SDK (which this package does depend on),
-		// mirroring how the SDK locates the binary internally. The SDK exposes
-		// only an ESM `import` export, so use `import.meta.resolve` for its entry
-		// (CJS `require.resolve` would reject the export map), then chain with
-		// `createRequire` from there.
-		const sdkEntry = import.meta.resolve(CODEX_SDK_NPM_NAME);
-		const sdkRequire = createRequire(sdkEntry);
-		const codexPackageJsonPath = sdkRequire.resolve(
-			`${CODEX_NPM_NAME}/package.json`,
-		);
-		const codexRequire = createRequire(codexPackageJsonPath);
-		const platformPackageJsonPath = codexRequire.resolve(
-			`${platformPackage}/package.json`,
-		);
-		vendorRoot = path.join(path.dirname(platformPackageJsonPath), "vendor");
+		packageJsonPath = require.resolve(`${CODEX_NPM_NAME}/package.json`);
 	} catch {
 		throw new Error(
-			`Unable to locate Codex CLI binaries. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
+			`Unable to locate ${CODEX_NPM_NAME}. Ensure it is installed as a dependency.`,
 		);
 	}
 
-	const archRoot = path.join(vendorRoot, targetTriple);
-	const codexBinaryName = platform === "win32" ? "codex.exe" : "codex";
-	// The vendored binary location changed across Codex versions: newer builds
-	// (>=0.13x) ship it under `bin/`, older ones under `codex/`. Pick whichever
-	// exists so a version bump doesn't break resolution.
-	const candidates = [
-		path.join(archRoot, "bin", codexBinaryName),
-		path.join(archRoot, "codex", codexBinaryName),
-	];
-	const found = candidates.find((candidate) => existsSync(candidate));
-	if (!found) {
+	const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+		bin?: string | Record<string, string>;
+	};
+	const binRelative = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.codex;
+	if (!binRelative) {
 		throw new Error(
-			`Unable to locate the Codex CLI binary under ${archRoot} (looked in bin/ and codex/).`,
+			`${CODEX_NPM_NAME} has no \`codex\` bin entry; cannot locate the CLI launcher.`,
 		);
 	}
-	return found;
+
+	const launcher = path.join(path.dirname(packageJsonPath), binRelative);
+	return { command: process.execPath, args: [launcher, ...APP_SERVER_ARGS] };
 }
