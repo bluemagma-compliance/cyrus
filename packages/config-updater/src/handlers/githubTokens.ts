@@ -65,12 +65,32 @@ export function ensureGitHubCredentialHelper(cyrusHome: string): string {
 }
 
 /**
+ * Authenticate the `gh` CLI with a pushed installation token.
+ *
+ * The droplet-local token refresh service used to run `gh auth login` every
+ * 20 minutes; with refresh moved to cyrus-hosted, this keeps bare `gh`
+ * usage (outside sessions, and sessions on droplet images whose gh wrapper
+ * strips GH_TOKEN) authenticated. Multi-org correctness comes from the
+ * per-session GH_TOKEN env var; this default uses the first token, which is
+ * exact for single-installation teams. Refreshed on every token push.
+ *
+ * Non-fatal by design — self-host machines may not have `gh` installed.
+ */
+export function configureGhCliAuth(token: string): void {
+	execFileSync("gh", ["auth", "login", "--with-token"], {
+		input: token,
+		stdio: ["pipe", "ignore", "ignore"],
+	});
+}
+
+/**
  * Handle a GitHub installation tokens push from cyrus-hosted.
  *
  * Persists the per-installation tokens to `<cyrusHome>/github-tokens.json`
- * (atomically, mode 0600) and ensures the git credential helper is
- * installed so concurrent git operations against different GitHub orgs
- * each authenticate with the right token.
+ * (atomically, mode 0600), ensures the git credential helper is installed
+ * so concurrent git operations against different GitHub orgs each
+ * authenticate with the right token, and refreshes the `gh` CLI's stored
+ * auth with the first pushed token.
  *
  * @param rawPayload - Unvalidated payload from the request
  * @param cyrusHome - Path to the Cyrus home directory
@@ -115,11 +135,28 @@ export async function handleGitHubTokens(
 		};
 	}
 
+	let ghAuthConfigured = false;
+	const firstToken = payload.tokens[0]?.token;
+	if (firstToken) {
+		try {
+			configureGhCliAuth(firstToken);
+			ghAuthConfigured = true;
+		} catch (error) {
+			// Non-fatal: gh may not be installed (self-host), and git auth via
+			// the credential helper is unaffected.
+			console.warn(
+				"[githubTokens] gh CLI auth refresh failed:",
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
 	return {
 		success: true,
 		message: "GitHub installation tokens updated successfully",
 		data: {
 			tokensCount: payload.tokens.length,
+			ghAuthConfigured,
 		},
 	};
 }
