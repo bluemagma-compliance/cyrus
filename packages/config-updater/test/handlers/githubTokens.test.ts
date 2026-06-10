@@ -82,7 +82,7 @@ describe("handleGitHubTokens", () => {
 		// Executable bit set
 		expect(statSync(scriptPath).mode & 0o111).not.toBe(0);
 
-		expect(mockedExecFileSync).toHaveBeenCalledTimes(4);
+		expect(mockedExecFileSync).toHaveBeenCalledTimes(7);
 		expect(mockedExecFileSync).toHaveBeenNthCalledWith(
 			1,
 			"git",
@@ -128,7 +128,7 @@ describe("handleGitHubTokens", () => {
 			expect(response.data?.ghAuthConfigured).toBe(true);
 		}
 		expect(mockedExecFileSync).toHaveBeenNthCalledWith(
-			4,
+			7,
 			"gh",
 			["auth", "login", "--with-token"],
 			expect.objectContaining({ input: payload.tokens[0].token }),
@@ -153,9 +153,9 @@ describe("handleGitHubTokens", () => {
 		const second = await handleGitHubTokens(validPayload(), cyrusHome);
 		expect(first.success).toBe(true);
 		expect(second.success).toBe(true);
-		// Each push re-runs the same replace-all + add + gh auth sequence
-		// (3 git calls + 1 gh call each)
-		expect(mockedExecFileSync).toHaveBeenCalledTimes(8);
+		// Each push re-runs the same replace-all + add for github.com and
+		// gitlab.com, then refreshes gh auth (6 git calls + 1 gh call each).
+		expect(mockedExecFileSync).toHaveBeenCalledTimes(14);
 	});
 
 	it("rejects a payload without a tokens array", async () => {
