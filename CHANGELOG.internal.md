@@ -24,7 +24,7 @@ This changelog documents internal development changes, refactors, tooling update
 - The `codex exec` backend was removed - Codex now runs exclusively through the app-server. The `ExecCodexBackend`, the `CodexRunnerConfig.useAppServer` field, the `EdgeWorkerConfig.codexUseAppServer` flag (+ its ConfigManager merge/change-detection wiring and the two EdgeWorker injection sites), and the `CODEX_USE_APP_SERVER` env gate are all gone. `CodexRunner.supportsStreamingInput` is now a constant `true`. This also fixes the bug where `codexUseAppServer` was dropped in `WorkerService`'s hand-built `EdgeWorkerConfig` (so the flag never reached self-hosted runs) - there is no flag to drop anymore. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
 
 ### Security
-- Bumped the Gemini runner test/dev dependency on `@google/gemini-cli-core` to `0.46.0` and added a narrow `@grpc/grpc-js >=1.14.4` override because the latest stable owning package still resolves the vulnerable transitive. Removed the now-redundant `shell-quote` override. ([CYPACK-1311](https://linear.app/ceedar/issue/CYPACK-1311), release prep)
+- Bumped the Gemini runner test/dev dependency on `@google/gemini-cli-core` to `0.46.0` and added a narrow `@grpc/grpc-js >=1.14.4` override because the latest stable owning package still resolves the vulnerable transitive. Removed the now-redundant `shell-quote` override. ([CYPACK-1311](https://linear.app/ceedar/issue/CYPACK-1311), [#1314](https://github.com/cyrusagents/cyrus/pull/1314))
 
 ## [0.2.63] - 2026-06-09
 
