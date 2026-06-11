@@ -6,10 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Slack/chat follow-up messages sent while the agent is mid-task are no longer dropped. Previously a quick second message got "I'm still working on the previous request… I'll pick up your new message once I'm done" and was then silently ignored; it's now queued and delivered as a new turn once the current one finishes (and, with the Codex app-server backend, woven into the active turn). Codex chat threads also now correctly continue the same session on follow-ups instead of starting fresh each time.
+- Codex sessions now translate Cyrus MCP allow-list entries into Codex MCP tool filters and approvals, so `mcp__server__tool` permissions restrict Codex sessions to the configured tools without requiring interactive approval. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1292](https://github.com/cyrusagents/cyrus/pull/1292))
+- Codex sessions now load Cyrus-hosted custom MCP configs with Codex-specific MCP options preserved, so configured MCP servers are available when using the Codex runner. ([CYPACK-1286](https://linear.app/ceedar/issue/CYPACK-1286), [#1290](https://github.com/cyrusagents/cyrus/pull/1290))
+- Git commands (`add`, `commit`, `merge`, etc.) no longer fail with "Operation not permitted" in multi-repo workspaces when running under a sandboxed agent (e.g. the Codex runner). Each repository's git metadata directory is now granted write access, not just the workspace container.
+- Codex issue and chat sessions can now use Cyrus-managed custom skills synced from the hosted app. Scoped managed skills are symlinked into Codex's native repository skill discovery path for each session and cleaned up afterward. ([CYPACK-1287](https://linear.app/ceedar/issue/CYPACK-1287/make-our-managed-skills-available-to-the-codex-runner), [#1291](https://github.com/cyrusagents/cyrus/pull/1291))
 
 ### Added
 - Codex sessions now honor the configured filesystem sandbox when the egress sandbox is enabled: each session runs under a per-thread Codex permission profile that confines writes to the worktree and restricts reads to the worktree plus allowed directories (home and the rest of the filesystem are denied), matching the Claude runner's posture. Without sandbox enabled, behavior is unchanged.
 - Codex now runs on the `codex app-server` backend, so it can respond to comments added while it's mid-task without throwing away its in-progress work: a follow-up comment is woven into Codex's current turn (rather than aborting and restarting it), matching how the Claude runner handles mid-task comments. This applies to Linear issues and Slack/chat threads alike. ([#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+
+### Changed
+- Updated `@anthropic-ai/claude-agent-sdk` to `0.3.173` (parity with Claude Code v2.1.173; includes `skipMcpDiscovery` plugin option and fix for slash-followed-by-whitespace prompts). ([CYPACK-1306](https://linear.app/ceedar/issue/CYPACK-1306), [#1312](https://github.com/cyrusagents/cyrus/pull/1312))
+- Updated `@anthropic-ai/sdk` to `0.104.1` (latest), keeping Claude sessions on current Anthropic API capabilities. ([CYPACK-1303](https://linear.app/ceedar/issue/CYPACK-1303), [#1308](https://github.com/ceedaragents/cyrus/pull/1308))
+
+## [0.2.63] - 2026-06-09
+
+### Added
+- Cyrus now recognizes Anthropic's new Fable model class: apply the `fable` model label or selector to run Claude sessions on `claude-fable-5`, with automatic fallback to Opus and then Sonnet when needed. ([CYPACK-1298](https://linear.app/ceedar/issue/CYPACK-1298), [#1302](https://github.com/cyrusagents/cyrus/pull/1302))
 
 ### Security
 - Patched Hono dependency advisories reported by Dependabot so `pnpm audit` is clean for the Cyrus CLI workspace. ([CYPACK-1290](https://linear.app/ceedar/issue/CYPACK-1290), [#1295](https://github.com/cyrusagents/cyrus/pull/1295))
@@ -18,10 +31,54 @@ All notable changes to this project will be documented in this file.
 - Codex sessions now default to `gpt-5.5`, and Linear model labels such as `gpt-5.5` are recognized as Codex model overrides alongside the existing `*-codex` labels. ([CYPACK-1282](https://linear.app/ceedar/issue/CYPACK-1282), [#1288](https://github.com/cyrusagents/cyrus/pull/1288))
 
 ### Fixed
-- Codex sessions now translate Cyrus MCP allow-list entries into Codex MCP tool filters and approvals, so `mcp__server__tool` permissions restrict Codex sessions to the configured tools without requiring interactive approval. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1292](https://github.com/cyrusagents/cyrus/pull/1292))
-- Codex sessions now load Cyrus-hosted custom MCP configs with Codex-specific MCP options preserved, so configured MCP servers are available when using the Codex runner. ([CYPACK-1286](https://linear.app/ceedar/issue/CYPACK-1286), [#1290](https://github.com/cyrusagents/cyrus/pull/1290))
-- Git commands (`add`, `commit`, `merge`, etc.) no longer fail with "Operation not permitted" in multi-repo workspaces when running under a sandboxed agent (e.g. the Codex runner). Each repository's git metadata directory is now granted write access, not just the workspace container.
-- Codex issue and chat sessions can now use Cyrus-managed custom skills synced from the hosted app. Scoped managed skills are symlinked into Codex's native repository skill discovery path for each session and cleaned up afterward. ([CYPACK-1287](https://linear.app/ceedar/issue/CYPACK-1287/make-our-managed-skills-available-to-the-codex-runner), [#1291](https://github.com/cyrusagents/cyrus/pull/1291))
+- Git commands (`add`, `commit`, `merge`, etc.) no longer fail with "Operation not permitted" in multi-repo workspaces when running under a sandboxed agent (e.g. the Codex runner). Each repository's git metadata directory is now granted write access, not just the workspace container. ([#1287](https://github.com/cyrusagents/cyrus/pull/1287))
+
+### Packages
+
+#### cyrus-cloudflare-tunnel-client
+- cyrus-cloudflare-tunnel-client@0.2.63
+
+#### cyrus-mcp-tools
+- cyrus-mcp-tools@0.2.63
+
+#### cyrus-claude-runner
+- cyrus-claude-runner@0.2.63
+
+#### cyrus-core
+- cyrus-core@0.2.63
+
+#### cyrus-simple-agent-runner
+- cyrus-simple-agent-runner@0.2.63
+
+#### cyrus-codex-runner
+- cyrus-codex-runner@0.2.63
+
+#### cyrus-cursor-runner
+- cyrus-cursor-runner@0.2.63
+
+#### cyrus-config-updater
+- cyrus-config-updater@0.2.63
+
+#### cyrus-linear-event-transport
+- cyrus-linear-event-transport@0.2.63
+
+#### cyrus-github-event-transport
+- cyrus-github-event-transport@0.2.63
+
+#### cyrus-gitlab-event-transport
+- cyrus-gitlab-event-transport@0.2.63
+
+#### cyrus-slack-event-transport
+- cyrus-slack-event-transport@0.2.63
+
+#### cyrus-gemini-runner
+- cyrus-gemini-runner@0.2.63
+
+#### cyrus-edge-worker
+- cyrus-edge-worker@0.2.63
+
+#### cyrus-ai (CLI)
+- cyrus-ai@0.2.63
 
 
 ## [0.2.62] - 2026-06-02
