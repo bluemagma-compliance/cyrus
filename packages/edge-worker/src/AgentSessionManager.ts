@@ -74,6 +74,8 @@ export class AgentSessionManager extends EventEmitter {
 	private toolCallsByToolUseId: Map<string, { name: string; input: any }> =
 		new Map(); // Track tool calls by their tool_use_id
 	private lastAssistantBodyBySession: Map<string, string> = new Map(); // Buffer: last assistant text per session for posting as response on result
+	private lastAssistantBodyIsToolInputBySession: Map<string, boolean> =
+		new Map(); // Whether the buffered body above is a tool_use input JSON (no trailing assistant text) — guards against posting raw JSON as the "response" (CYPACK-1177)
 	private bufferedAssistantEntryBySession: Map<string, CyrusAgentSessionEntry> =
 		new Map(); // One-behind buffer: holds last assistant entry until next message or result
 	private taskSubjectsByToolUseId: Map<string, string> = new Map(); // Cache TaskCreate subjects by toolUseId until result arrives with task ID
@@ -551,11 +553,18 @@ export class AgentSessionManager extends EventEmitter {
 						sessionId,
 						message as SDKAssistantMessage,
 					);
-					// Buffer the text content so addResultEntry can post it as the response
+					// Buffer the text content so addResultEntry can post it as the response.
+					// Track whether this body is a tool_use input (JSON) rather than real
+					// assistant prose, so addResultEntry never posts raw tool JSON as the
+					// final "response" when a turn ends on a tool call (CYPACK-1177).
 					if (assistantEntry.content) {
 						this.lastAssistantBodyBySession.set(
 							sessionId,
 							assistantEntry.content,
+						);
+						this.lastAssistantBodyIsToolInputBySession.set(
+							sessionId,
+							!!assistantEntry.metadata?.toolUseId,
 						);
 					}
 					if (assistantEntry.metadata?.toolUseId) {
@@ -682,42 +691,58 @@ export class AgentSessionManager extends EventEmitter {
 						? "cursor"
 						: "claude";
 
-		// For error results, content may be in errors[] rather than result
-		// For success results from Claude, prefer the buffered last assistant message
-		// (structured content) over result.result (plain-text duplicate).
-		const bufferedAssistant = this.lastAssistantBodyBySession.get(sessionId);
-		this.lastAssistantBodyBySession.delete(sessionId);
-		let content = (
-			resultMessage.is_error
-				? resultMessage.is_error &&
-					"errors" in resultMessage &&
-					Array.isArray(resultMessage.errors) &&
-					resultMessage.errors.length > 0
-					? resultMessage.errors.join("\n")
-					: "result" in resultMessage &&
-							typeof resultMessage.result === "string"
-						? resultMessage.result
-						: ""
-				: (bufferedAssistant ??
-					("result" in resultMessage && typeof resultMessage.result === "string"
-						? resultMessage.result
-						: ""))
-		).trim();
+		// For error results, content may be in errors[] rather than result.
+		const resultText =
+			"result" in resultMessage && typeof resultMessage.result === "string"
+				? resultMessage.result.trim()
+				: "";
 
-		// When the turn ended on a bare ScheduleWakeup call, the buffered
-		// "last assistant message" is the raw tool-input JSON (tool_use blocks
-		// are stringified by extractContent). Posting that as the Linear
-		// response is unreadable — render it as friendly wakeup prose instead.
-		// Gated on the runner actually reporting a pending cron so prose that
-		// merely looks like the JSON is never rewritten on a finished session.
-		if (!resultMessage.is_error) {
+		// For success results, prefer the buffered last assistant message
+		// (structured content) over result.result (a plain-text duplicate). But
+		// when a turn ENDS on a tool call with no trailing assistant text, that
+		// buffered body is the tool's raw input JSON — which must never be posted
+		// as the Linear "response" (CYPACK-1177 / CYHOST-905: sessions showed a
+		// "Finished" entry whose body was raw ScheduleWakeup / background-Bash
+		// JSON).
+		const bufferedAssistant = this.lastAssistantBodyBySession.get(sessionId);
+		const bufferedIsToolInput =
+			this.lastAssistantBodyIsToolInputBySession.get(sessionId) ?? false;
+		this.lastAssistantBodyBySession.delete(sessionId);
+		this.lastAssistantBodyIsToolInputBySession.delete(sessionId);
+
+		let content: string;
+		if (resultMessage.is_error) {
+			content = (
+				"errors" in resultMessage &&
+				Array.isArray(resultMessage.errors) &&
+				resultMessage.errors.length > 0
+					? resultMessage.errors.join("\n")
+					: resultText
+			).trim();
+		} else if (bufferedIsToolInput) {
+			// Turn ended on a tool call. Render a friendly response for a
+			// ScheduleWakeup (gated on the runner actually reporting a pending
+			// cron so a finished session is never rewritten); otherwise fall back
+			// to the SDK's result text and, failing that, post nothing — the raw
+			// tool JSON is never surfaced. Any pending work is declared by the
+			// separate "Standing by" thought, so an empty response here is fine.
 			const pendingWork = this.getRunnerPendingWork(sessionId);
-			if (pendingWork && pendingWork.sessionCrons.length > 0) {
-				const wakeupInput = tryParseScheduleWakeupInput(content);
-				if (wakeupInput) {
-					content = formatScheduleWakeupResponse(wakeupInput);
-				}
-			}
+			const wakeupInput =
+				pendingWork && pendingWork.sessionCrons.length > 0
+					? tryParseScheduleWakeupInput(bufferedAssistant ?? "")
+					: null;
+			content = wakeupInput
+				? formatScheduleWakeupResponse(wakeupInput)
+				: resultText;
+		} else {
+			content = (bufferedAssistant ?? resultText).trim();
+		}
+
+		// Never post an empty/blank "response" activity — that renders as a
+		// bare "Finished" with no body. Skip it entirely (the timeline already
+		// shows the trailing action, and pending work has its own thought).
+		if (!content.trim()) {
+			return;
 		}
 
 		const resultEntry: CyrusAgentSessionEntry = {

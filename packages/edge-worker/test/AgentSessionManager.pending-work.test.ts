@@ -236,14 +236,75 @@ describe("AgentSessionManager pending-work activities", () => {
 			([, content]) => content,
 		);
 
-		// Without pending work the buffered JSON is posted as-is (pre-existing
-		// behavior) and no standing-by thought appears.
+		// Without pending work it is not formatted as a wakeup, and — crucially —
+		// the raw tool-input JSON is NOT posted as the response (CYPACK-1177).
+		// The SDK result text is used instead; no standing-by thought appears.
 		const response = postedContents.find((c: any) => c?.type === "response");
 		expect(response).toBeDefined();
+		expect(response.body).toBe("All done.");
 		expect(response.body).not.toContain("Wakeup scheduled");
+		expect(response.body).not.toContain("delaySeconds");
 		expect(
 			postedContents.some(
 				(c: any) => c?.type === "thought" && c.body?.includes("Standing by"),
+			),
+		).toBe(false);
+	});
+
+	it("never posts raw tool-input JSON when a turn ends on a background Bash with no text (CYPACK-1177/CYHOST-905)", async () => {
+		// The original user bug: a turn ending on a background `Bash` tool call
+		// with no trailing assistant text posted a "Finished" entry whose body
+		// was the raw Bash input JSON. With no SDK result text either, the
+		// response activity must be skipped entirely rather than dumping JSON.
+		setup(null);
+
+		const bashToolUse = {
+			type: "assistant",
+			session_id: "claude-session",
+			parent_tool_use_id: null,
+			uuid: "uuid-bash-tool",
+			message: {
+				id: "msg_bash",
+				type: "message",
+				role: "assistant",
+				model: "claude",
+				stop_reason: "tool_use",
+				stop_sequence: null,
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_creation_input_tokens: 0,
+					cache_read_input_tokens: 0,
+				},
+				content: [
+					{
+						type: "tool_use",
+						id: "toolu_bash",
+						name: "Bash",
+						input: {
+							command: "echo 'waiting for repo...'",
+							description: "idle",
+						},
+					},
+				],
+			},
+		} as unknown as SDKAssistantMessage;
+
+		await manager.handleClaudeMessage(sessionId, bashToolUse);
+		// Result with empty result text (turn ended on the tool call).
+		await manager.handleClaudeMessage(sessionId, buildSuccessResult(""));
+
+		const postedContents = postActivitySpy.mock.calls.map(
+			([, content]) => content,
+		);
+
+		// No response activity at all — and certainly no raw JSON.
+		const response = postedContents.find((c: any) => c?.type === "response");
+		expect(response).toBeUndefined();
+		expect(
+			postedContents.some(
+				(c: any) =>
+					typeof c?.body === "string" && c.body.includes("waiting for repo"),
 			),
 		).toBe(false);
 	});
