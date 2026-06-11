@@ -8,9 +8,68 @@ All notable changes to this project will be documented in this file.
 - The `ScheduleWakeup` tool now works in Claude sessions: when an agent schedules a wakeup (or has session crons / background tasks in flight) at the end of a turn, Cyrus keeps the session alive so the wakeup actually fires, instead of shutting the Claude subprocess down and silently dropping the timer. Sessions with nothing pending still shut down at turn end to free memory. ([CYPACK-1310](https://linear.app/ceedar/issue/CYPACK-1310), [#1313](https://github.com/cyrusagents/cyrus/pull/1313))
 - Turns that end on a `ScheduleWakeup` call now post a readable "⏰ Wakeup scheduled" response to the Linear timeline instead of raw tool JSON, followed by a "⏳ Standing by" thought that lists everything the session is waiting on (wakeup times, recurring crons, background commands) and returns the Linear agent panel to its working state. ([CYPACK-1310](https://linear.app/ceedar/issue/CYPACK-1310), [#1313](https://github.com/cyrusagents/cyrus/pull/1313))
 
+## [0.2.64] - 2026-06-11
+
+### Fixed
+- Slack/chat follow-up messages sent while the agent is mid-task are no longer dropped. Previously a quick second message got "I'm still working on the previous request… I'll pick up your new message once I'm done" and was then silently ignored; it's now queued and delivered as a new turn once the current one finishes (and, with the Codex app-server backend, woven into the active turn). Codex chat threads also now correctly continue the same session on follow-ups instead of starting fresh each time. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+- Codex sessions now translate Cyrus MCP allow-list entries into Codex MCP tool filters and approvals, so `mcp__server__tool` permissions restrict Codex sessions to the configured tools without requiring interactive approval. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+- Codex sessions now load Cyrus-hosted custom MCP configs with Codex-specific MCP options preserved, so configured MCP servers are available when using the Codex runner. ([CYPACK-1286](https://linear.app/ceedar/issue/CYPACK-1286), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+- Codex issue and chat sessions can now use Cyrus-managed custom skills synced from the hosted app. Scoped managed skills are symlinked into Codex's native repository skill discovery path for each session and cleaned up afterward. ([CYPACK-1287](https://linear.app/ceedar/issue/CYPACK-1287/make-our-managed-skills-available-to-the-codex-runner), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+
+### Added
+- Codex sessions now honor the configured filesystem sandbox when the egress sandbox is enabled: each session runs under a per-thread Codex permission profile that confines writes to the worktree and restricts reads to the worktree plus allowed directories (home and the rest of the filesystem are denied), matching the Claude runner's posture. Without sandbox enabled, behavior is unchanged. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+- Codex now runs on the `codex app-server` backend, so it can respond to comments added while it's mid-task without throwing away its in-progress work: a follow-up comment is woven into Codex's current turn (rather than aborting and restarting it), matching how the Claude runner handles mid-task comments. This applies to Linear issues and Slack/chat threads alike. ([CYPACK-1288](https://linear.app/ceedar/issue/CYPACK-1288), [#1293](https://github.com/cyrusagents/cyrus/pull/1293))
+
 ### Changed
 - Updated `@anthropic-ai/claude-agent-sdk` to `0.3.173` (parity with Claude Code v2.1.173; includes `skipMcpDiscovery` plugin option and fix for slash-followed-by-whitespace prompts). ([CYPACK-1306](https://linear.app/ceedar/issue/CYPACK-1306), [#1312](https://github.com/cyrusagents/cyrus/pull/1312))
-- Updated `@anthropic-ai/sdk` to `0.104.1` (latest), keeping Claude sessions on current Anthropic API capabilities. ([CYPACK-1303](https://linear.app/ceedar/issue/CYPACK-1303), [#1308](https://github.com/ceedaragents/cyrus/pull/1308))
+- Updated `@anthropic-ai/sdk` to `0.104.1` (latest), keeping Claude sessions on current Anthropic API capabilities. ([CYPACK-1303](https://linear.app/ceedar/issue/CYPACK-1303), [#1308](https://github.com/cyrusagents/cyrus/pull/1308))
+
+### Packages
+
+#### cyrus-cloudflare-tunnel-client
+- cyrus-cloudflare-tunnel-client@0.2.64
+
+#### cyrus-mcp-tools
+- cyrus-mcp-tools@0.2.64
+
+#### cyrus-claude-runner
+- cyrus-claude-runner@0.2.64
+
+#### cyrus-core
+- cyrus-core@0.2.64
+
+#### cyrus-simple-agent-runner
+- cyrus-simple-agent-runner@0.2.64
+
+#### cyrus-codex-runner
+- cyrus-codex-runner@0.2.64
+
+#### cyrus-cursor-runner
+- cyrus-cursor-runner@0.2.64
+
+#### cyrus-config-updater
+- cyrus-config-updater@0.2.64
+
+#### cyrus-linear-event-transport
+- cyrus-linear-event-transport@0.2.64
+
+#### cyrus-github-event-transport
+- cyrus-github-event-transport@0.2.64
+
+#### cyrus-gitlab-event-transport
+- cyrus-gitlab-event-transport@0.2.64
+
+#### cyrus-slack-event-transport
+- cyrus-slack-event-transport@0.2.64
+
+#### cyrus-gemini-runner
+- cyrus-gemini-runner@0.2.64
+
+#### cyrus-edge-worker
+- cyrus-edge-worker@0.2.64
+
+#### cyrus-ai (CLI)
+- cyrus-ai@0.2.64
 
 ## [0.2.63] - 2026-06-09
 
