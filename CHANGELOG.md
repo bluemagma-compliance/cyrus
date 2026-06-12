@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Updated `@anthropic-ai/claude-agent-sdk` to `0.3.175` (adds `DesignSync` tool). `@anthropic-ai/sdk` remains at `0.104.1` (latest). ([CYPACK-1318](https://linear.app/ceedar/issue/CYPACK-1318), [#1319](https://github.com/cyrusagents/cyrus/pull/1319))
+
 ### Fixed
 - Sessions that schedule a wakeup or background task no longer falsely report "Finished" with raw tool JSON, and the scheduled work actually runs. Previously, ending a turn on a `ScheduleWakeup` (or background `Bash`) call shut the Claude subprocess down — silently dropping the timer so the session never resumed — and posted a "Finished" Linear activity whose body was the raw tool-input JSON. Now Cyrus keeps the session alive while a wakeup, session cron, or background task is in flight (so it fires), posts a readable "⏰ Wakeup scheduled" response instead of JSON, and adds a "⏳ Standing by" thought listing what the session is waiting on — returning the Linear agent panel to its working state. Sessions with nothing pending still shut down at turn end to free memory. ([CYPACK-1310](https://linear.app/ceedar/issue/CYPACK-1310), [CYPACK-1177](https://linear.app/ceedar/issue/CYPACK-1177), [CYHOST-905](https://linear.app/ceedar/issue/CYHOST-905), [#1313](https://github.com/cyrusagents/cyrus/pull/1313))
 - The final "response" activity is never raw tool-input JSON. When a turn ends on a tool call with no trailing assistant text, Cyrus now uses the model's result text or skips the response entirely rather than dumping the last tool's input JSON into the Linear timeline. ([CYPACK-1177](https://linear.app/ceedar/issue/CYPACK-1177), [#1313](https://github.com/cyrusagents/cyrus/pull/1313))
