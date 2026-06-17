@@ -75,10 +75,6 @@ export const LINEAR_DEFAULT_ALLOWED_TOOLS = [
 	"ToolSearch",
 	"Skill",
 
-	// Team lifecycle
-	"TeamCreate",
-	"TeamDelete",
-
 	// Workflow orchestration
 	"Workflow",
 
@@ -196,10 +192,6 @@ export const GITHUB_DEFAULT_ALLOWED_TOOLS = [
 	"RemoteTrigger",
 	"ToolSearch",
 	"Skill",
-
-	// Team lifecycle
-	"TeamCreate",
-	"TeamDelete",
 
 	// Workflow orchestration
 	"Workflow",

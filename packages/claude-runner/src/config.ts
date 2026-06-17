@@ -65,15 +65,14 @@ export const availableTools = [
 	"TaskOutput",
 	"TaskStop",
 
-	// Team management
-	"TeamCreate",
-	"TeamDelete",
-
 	// Tool discovery
 	"ToolSearch",
 
 	// Workflow orchestration
 	"Workflow",
+
+	// Design sync tool
+	"DesignSync",
 ] as const;
 
 export type ToolName = (typeof availableTools)[number];

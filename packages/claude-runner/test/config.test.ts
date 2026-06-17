@@ -43,12 +43,11 @@ describe("config", () => {
 				"RemoteTrigger",
 				"TaskOutput",
 				"TaskStop",
-				"TeamCreate",
-				"TeamDelete",
 				"ToolSearch",
 				"Workflow",
+				"DesignSync",
 			]);
-			expect(availableTools).toHaveLength(33);
+			expect(availableTools).toHaveLength(32);
 		});
 
 		it("should define read-only tools", () => {
