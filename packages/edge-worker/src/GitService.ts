@@ -61,7 +61,6 @@ const TEARDOWN_TIMEOUT_MS = 2 * 60 * 1000;
 const HOOK_OUTPUT_TAIL_MAX_BYTES = 64 * 1024;
 const HOOK_OUTPUT_TAIL_MAX_CHARS = 8_000;
 const HOOK_OUTPUT_TAIL_MAX_LINES = 40;
-const HOOK_OUTPUT_TRUNCATED_MARKER = "[Showing the end of the setup output]";
 
 type HookKind = "setup" | "teardown";
 
@@ -158,7 +157,10 @@ function redactHookOutput(
 	return redacted;
 }
 
-function truncateHookOutputTail(output: string): string {
+function truncateHookOutputTail(output: string): {
+	text: string;
+	truncated: boolean;
+} {
 	const lines = output.split(/\r?\n/);
 	let truncated = false;
 	let selectedLines = lines;
@@ -173,11 +175,7 @@ function truncateHookOutputTail(output: string): string {
 		tail = tail.slice(-HOOK_OUTPUT_TAIL_MAX_CHARS);
 	}
 
-	if (truncated) {
-		tail = `${HOOK_OUTPUT_TRUNCATED_MARKER}\n${tail}`;
-	}
-
-	return tail.trim();
+	return { text: tail.trim(), truncated };
 }
 
 class HookOutputCollector {
@@ -202,7 +200,10 @@ class HookOutputCollector {
 		}
 	}
 
-	tail(opts: { cwd: string; env: Record<string, string> }): string {
+	tail(opts: { cwd: string; env: Record<string, string> }): {
+		text: string;
+		truncated: boolean;
+	} {
 		return truncateHookOutputTail(redactHookOutput(this.chunks.join(""), opts));
 	}
 }
@@ -1474,8 +1475,13 @@ export class GitService {
 						NodeExecError & { stdoutTail?: string; stderrTail?: string };
 					error.code = code === null ? undefined : code;
 					error.signal = timedOut ? "SIGTERM" : (signal ?? undefined);
-					error.stdoutTail = stdoutCollector.tail({ cwd, env });
-					error.stderrTail = stderrCollector.tail({ cwd, env });
+					const stdoutTail = stdoutCollector.tail({ cwd, env });
+					const stderrTail = stderrCollector.tail({ cwd, env });
+					error.stdoutTail = stdoutTail.text;
+					error.stderrTail = stderrTail.text;
+					(
+						error as typeof error & { outputTruncated?: boolean }
+					).outputTruncated = stdoutTail.truncated || stderrTail.truncated;
 					reject(error);
 				});
 			});
@@ -1505,6 +1511,7 @@ export class GitService {
 				const nodeError = error as NodeExecError & {
 					stdoutTail?: unknown;
 					stderrTail?: unknown;
+					outputTruncated?: unknown;
 				};
 				const stdoutTail =
 					typeof nodeError.stdoutTail === "string"
@@ -1526,9 +1533,7 @@ export class GitService {
 					errorMessage: redactHookOutput(errorMessage, { cwd, env }),
 					stdoutTail,
 					stderrTail,
-					truncated:
-						stdoutTail?.startsWith(HOOK_OUTPUT_TRUNCATED_MARKER) === true ||
-						stderrTail?.startsWith(HOOK_OUTPUT_TRUNCATED_MARKER) === true,
+					truncated: nodeError.outputTruncated === true,
 				});
 			}
 		}

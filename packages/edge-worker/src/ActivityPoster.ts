@@ -212,13 +212,6 @@ export class ActivityPoster {
 		if (stderrTail) {
 			lines.push("", "Stderr tail:", "```", stderrTail, "```");
 		}
-		if (event.truncated) {
-			lines.push(
-				"",
-				"Showing only the end of the setup output to keep this session readable.",
-			);
-		}
-
 		return lines.join("\n");
 	}
 
