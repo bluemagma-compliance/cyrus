@@ -212,7 +212,37 @@ export class ActivityPoster {
 		if (stderrTail) {
 			lines.push("", "Stderr tail:", "```", stderrTail, "```");
 		}
+		const hint = this.formatRepoSetupHookFailureHint(event);
+		if (hint) {
+			lines.push("", hint);
+		}
 		return lines.join("\n");
+	}
+
+	private formatRepoSetupHookFailureHint(
+		event: RepoSetupHookEvent,
+	): string | null {
+		const output = [event.errorMessage, event.stdoutTail, event.stderrTail]
+			.filter((value): value is string => Boolean(value))
+			.join("\n")
+			.toLowerCase();
+
+		if (!this.looksLikeSudoFailure(output)) {
+			return null;
+		}
+
+		return "The setup script does not run with sudo privileges. Move privileged machine setup outside `cyrus-setup.sh`, or change the hook to use commands Cyrus can run without an interactive sudo prompt.";
+	}
+
+	private looksLikeSudoFailure(output: string): boolean {
+		return [
+			/sudo:/,
+			/no tty present/,
+			/a password is required/,
+			/not in the sudoers file/,
+			/must be run as root/,
+			/permission denied.*sudo/,
+		].some((pattern) => pattern.test(output));
 	}
 
 	private formatDuration(durationMs?: number): string | null {
