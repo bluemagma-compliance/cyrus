@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Updated `@anthropic-ai/claude-agent-sdk` from `0.3.173` to [`0.3.183`](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md) and `@anthropic-ai/sdk` from `^0.104.1` to `^0.105.0`. Tool allowance lists refreshed: `DesignSync` added, `TeamCreate`/`TeamDelete` removed (no longer emitted by Claude Code in SDK 0.3.183). ([CYPACK-1339](https://linear.app/ceedar/issue/CYPACK-1339), [#1337](https://github.com/cyrusagents/cyrus/pull/1337))
+- Updated `@anthropic-ai/claude-agent-sdk` from `0.3.173` to [`0.3.183`](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md) and `@anthropic-ai/sdk` from `^0.104.1` to `^0.105.0`. Tool allowance lists refreshed: `DesignSync` added, `TeamCreate`/`TeamDelete` removed (no longer emitted by Claude Code in SDK 0.3.183). ([CYPACK-1339](https://linear.app/ceedar/issue/CYPACK-1339), [#1334](https://github.com/cyrusagents/cyrus/pull/1334))
 
 ### Security
 - Patched the Cyrus CLI dependency graph so `pnpm audit` reports no known vulnerabilities, including updated Sentry, Cursor SDK, Axios, Vite/esbuild, Hono, form-data, ws, protobufjs, and OpenTelemetry resolutions. ([CYPACK-1334](https://linear.app/ceedar/issue/CYPACK-1334), [#1330](https://github.com/cyrusagents/cyrus/pull/1330))
