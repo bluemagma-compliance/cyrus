@@ -47,7 +47,7 @@ describe("ActivityPoster", () => {
 		expect(result).toContain(
 			"The setup script does not run with sudo privileges.",
 		);
-		expect(result).toContain("without an interactive sudo prompt");
+		expect(result).toContain("use a runtime/host environment");
 	});
 
 	it("does not add sudo guidance to non-sudo repo setup hook failures", async () => {
@@ -66,6 +66,6 @@ describe("ActivityPoster", () => {
 		const result = createAgentActivity.mock.calls[0][0].content.result;
 		expect(result).toContain("missing package @fake/missing");
 		expect(result).not.toContain("sudo privileges");
-		expect(result).not.toContain("interactive sudo prompt");
+		expect(result).not.toContain("runtime/host environment");
 	});
 });
