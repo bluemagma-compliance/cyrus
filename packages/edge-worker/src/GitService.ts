@@ -61,6 +61,7 @@ const TEARDOWN_TIMEOUT_MS = 2 * 60 * 1000;
 const HOOK_OUTPUT_TAIL_MAX_BYTES = 64 * 1024;
 const HOOK_OUTPUT_TAIL_MAX_CHARS = 8_000;
 const HOOK_OUTPUT_TAIL_MAX_LINES = 40;
+const HOOK_OUTPUT_TRUNCATED_MARKER = "[Showing the end of the setup output]";
 
 type HookKind = "setup" | "teardown";
 
@@ -173,7 +174,7 @@ function truncateHookOutputTail(output: string): string {
 	}
 
 	if (truncated) {
-		tail = `[output truncated to last ${HOOK_OUTPUT_TAIL_MAX_LINES} lines / ${HOOK_OUTPUT_TAIL_MAX_CHARS} chars]\n${tail}`;
+		tail = `${HOOK_OUTPUT_TRUNCATED_MARKER}\n${tail}`;
 	}
 
 	return tail.trim();
@@ -1526,8 +1527,8 @@ export class GitService {
 					stdoutTail,
 					stderrTail,
 					truncated:
-						stdoutTail?.startsWith("[output truncated") === true ||
-						stderrTail?.startsWith("[output truncated") === true,
+						stdoutTail?.startsWith(HOOK_OUTPUT_TRUNCATED_MARKER) === true ||
+						stderrTail?.startsWith(HOOK_OUTPUT_TRUNCATED_MARKER) === true,
 				});
 			}
 		}

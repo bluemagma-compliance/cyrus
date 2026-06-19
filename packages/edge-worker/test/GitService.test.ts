@@ -776,7 +776,9 @@ describe("GitService", () => {
 				onRepoSetupHookEvent: (event) => events.push(event),
 			});
 
-			expect(events[1].stdoutTail).toContain("[output truncated");
+			expect(events[1].stdoutTail).toContain(
+				"[Showing the end of the setup output]",
+			);
 			expect(events[1].stdoutTail).not.toContain("stdout line 0");
 			expect(events[1].stdoutTail).toContain("stdout line 44");
 			expect(events[1].truncated).toBe(true);
