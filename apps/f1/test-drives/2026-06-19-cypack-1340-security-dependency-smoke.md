@@ -15,11 +15,11 @@
 - [x] Server started
 - [x] CLI RPC server registered
 - [x] Status endpoint reported ready
-- [x] Agent session intentionally skipped because this change only patches dependencies and does not alter runner/session behavior
+- [ ] Agent session not started because this change only patches dependencies and does not alter runner/session behavior
 
 ### Renderer
 - [x] CLI output remained readable
-- [x] Activity pagination intentionally skipped because no agent session was started
+- [ ] Activity pagination not exercised because no agent session was started
 
 ## Session Log
 
