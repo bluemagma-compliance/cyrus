@@ -1347,6 +1347,14 @@ export class GitService {
 		// Expand ~ to home directory
 		const expandedPath = scriptPath.replace(/^~/, homedir());
 		const labelTitle = `${originLabel.charAt(0).toUpperCase()}${originLabel.slice(1)} ${hook}`;
+		const scriptName = basename(expandedPath);
+		const shouldPostRepoSetupActivity = Boolean(
+			originLabel === "repository" &&
+				hook === "setup" &&
+				issueIdentifier &&
+				onRepoSetupHookEvent,
+		);
+		const startedAt = Date.now();
 
 		if (!existsSync(expandedPath)) {
 			this.logger.warn(`⚠️  ${labelTitle} script not found: ${scriptPath}`);
@@ -1362,6 +1370,19 @@ export class GitService {
 						`⚠️  ${labelTitle} script is not executable: ${scriptPath}`,
 					);
 					this.logger.warn(`   Run: chmod +x "${expandedPath}"`);
+					if (shouldPostRepoSetupActivity) {
+						await this.emitRepoSetupHookEvent(onRepoSetupHookEvent, {
+							status: "failed",
+							issueIdentifier: issueIdentifier!,
+							scriptName,
+							repositoryName,
+							durationMs: Date.now() - startedAt,
+							errorMessage: "Repository setup hook is not executable",
+							stderrTail:
+								"Make cyrus-setup.sh executable in the repository and commit the executable bit: git update-index --chmod=+x cyrus-setup.sh",
+							truncated: false,
+						});
+					}
 					return;
 				}
 			} catch (error) {
@@ -1372,17 +1393,9 @@ export class GitService {
 			}
 		}
 
-		const scriptName = basename(expandedPath);
 		this.logger.info(
 			`ℹ️  Running ${labelTitle.toLowerCase()} script: ${scriptName}`,
 		);
-		const shouldPostRepoSetupActivity = Boolean(
-			originLabel === "repository" &&
-				hook === "setup" &&
-				issueIdentifier &&
-				onRepoSetupHookEvent,
-		);
-		const startedAt = Date.now();
 
 		if (shouldPostRepoSetupActivity) {
 			await this.emitRepoSetupHookEvent(onRepoSetupHookEvent, {

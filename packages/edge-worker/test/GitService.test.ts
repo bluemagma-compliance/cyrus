@@ -722,6 +722,41 @@ describe("GitService", () => {
 			});
 		});
 
+		it("emits repo setup failure events when hook is not executable", async () => {
+			const issue = makeIssue();
+			const repository = makeRepository();
+			const events: any[] = [];
+			setupSuccessfulWorktreeCreate();
+			mockExistsSync.mockImplementation(
+				(path: any) =>
+					String(path) === "/home/user/.cyrus/worktrees/ENG-97/cyrus-setup.sh",
+			);
+			mockStatSync.mockReturnValue({ mode: 0o644, isFile: () => false } as any);
+
+			const result = await gitService.createGitWorktree(issue, [repository], {
+				onRepoSetupHookEvent: (event) => events.push(event),
+			});
+
+			expect(result.isGitWorktree).toBe(true);
+			expect(mockSpawn).not.toHaveBeenCalledWith(
+				"bash",
+				["/home/user/.cyrus/worktrees/ENG-97/cyrus-setup.sh"],
+				expect.anything(),
+			);
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({
+				status: "failed",
+				issueIdentifier: "ENG-97",
+				scriptName: "cyrus-setup.sh",
+				repositoryName: "test-repo",
+				errorMessage: "Repository setup hook is not executable",
+				stderrTail:
+					"Make cyrus-setup.sh executable in the repository and commit the executable bit: git update-index --chmod=+x cyrus-setup.sh",
+				truncated: false,
+			});
+			expect(events[0].durationMs).toEqual(expect.any(Number));
+		});
+
 		it("truncates repo setup failure output tails", async () => {
 			const issue = makeIssue();
 			const repository = makeRepository();
