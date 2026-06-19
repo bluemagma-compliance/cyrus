@@ -722,7 +722,7 @@ describe("GitService", () => {
 			});
 		});
 
-		it("emits repo setup failure events when hook is not executable", async () => {
+		it("runs repo setup shell hooks when they are not executable", async () => {
 			const issue = makeIssue();
 			const repository = makeRepository();
 			const events: any[] = [];
@@ -732,29 +732,28 @@ describe("GitService", () => {
 					String(path) === "/home/user/.cyrus/worktrees/ENG-97/cyrus-setup.sh",
 			);
 			mockStatSync.mockReturnValue({ mode: 0o644, isFile: () => false } as any);
+			mockSuccessfulSpawn("setup complete\n");
 
 			const result = await gitService.createGitWorktree(issue, [repository], {
 				onRepoSetupHookEvent: (event) => events.push(event),
 			});
 
 			expect(result.isGitWorktree).toBe(true);
-			expect(mockSpawn).not.toHaveBeenCalledWith(
+			expect(mockSpawn).toHaveBeenCalledWith(
 				"bash",
 				["/home/user/.cyrus/worktrees/ENG-97/cyrus-setup.sh"],
 				expect.anything(),
 			);
-			expect(events).toHaveLength(1);
-			expect(events[0]).toMatchObject({
-				status: "failed",
+			expect(events.map((event) => event.status)).toEqual([
+				"started",
+				"succeeded",
+			]);
+			expect(events[1]).toMatchObject({
 				issueIdentifier: "ENG-97",
 				scriptName: "cyrus-setup.sh",
 				repositoryName: "test-repo",
-				errorMessage: "Repository setup hook is not executable",
-				stderrTail:
-					"Make cyrus-setup.sh executable in the repository and commit the executable bit: git update-index --chmod=+x cyrus-setup.sh",
-				truncated: false,
 			});
-			expect(events[0].durationMs).toEqual(expect.any(Number));
+			expect(events[1].durationMs).toEqual(expect.any(Number));
 		});
 
 		it("truncates repo setup failure output tails", async () => {
@@ -1253,7 +1252,7 @@ describe("GitService", () => {
 			expect(mockRmSync).toHaveBeenCalled();
 		});
 
-		it("warns and skips when teardown script is not executable", async () => {
+		it("runs teardown shell hooks when they are not executable", async () => {
 			mockExistsSync.mockImplementation((path: any) => {
 				const p = String(path);
 				if (p === "/home/user/.cyrus/worktrees/DEF-123") return true;
@@ -1281,14 +1280,18 @@ describe("GitService", () => {
 				return "";
 			});
 			mockExecSync.mockReturnValue(Buffer.from(""));
+			mockSuccessfulSpawn("teardown complete\n");
 
 			await gitService.deleteWorktree("DEF-123", {
 				repositories: [makeRepo("a", "repo-a", "/home/user/repos/repo-a")],
 			});
 
-			const execCmds = mockExecSync.mock.calls.map((c) => String(c[0]));
-			expect(execCmds.some((c) => c.includes("cyrus-teardown.sh"))).toBe(false);
-			expect(mockLogger.warn).toHaveBeenCalledWith(
+			expect(mockSpawn).toHaveBeenCalledWith(
+				"bash",
+				["/home/user/.cyrus/worktrees/DEF-123/cyrus-teardown.sh"],
+				expect.anything(),
+			);
+			expect(mockLogger.warn).not.toHaveBeenCalledWith(
 				expect.stringContaining("not executable"),
 			);
 		});

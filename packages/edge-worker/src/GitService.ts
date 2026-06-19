@@ -1361,8 +1361,11 @@ export class GitService {
 			return;
 		}
 
-		// Check if script is executable (Unix only)
-		if (process.platform !== "win32") {
+		const runsThroughInterpreter =
+			expandedPath.endsWith(".sh") || expandedPath.endsWith(".ps1");
+
+		// Check if script is executable when it will be invoked directly.
+		if (process.platform !== "win32" && !runsThroughInterpreter) {
 			try {
 				const stats = statSync(expandedPath);
 				if (!(stats.mode & 0o100)) {
