@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Updated `@anthropic-ai/claude-agent-sdk` from `0.3.185` to `0.3.186`, bringing in the latest Claude Code version. Tool list is unchanged at 32 tools. ([CYPACK-1349](https://linear.app/ceedar/issue/CYPACK-1349))
+- Updated `@anthropic-ai/claude-agent-sdk` from `0.3.185` to `0.3.186`, bringing in the latest Claude Code version. Tool list is unchanged at 32 tools. ([CYPACK-1349](https://linear.app/ceedar/issue/CYPACK-1349), [#1344](https://github.com/cyrusagents/cyrus/pull/1344))
 
 ## [0.2.66] - 2026-06-19
 
