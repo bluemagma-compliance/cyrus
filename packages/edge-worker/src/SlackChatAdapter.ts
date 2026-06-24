@@ -126,10 +126,21 @@ export class SlackChatAdapter
 	 *   session for arbitrary channel chatter.
 	 */
 	isSessionInitiatingEvent(event: SlackWebhookEvent): boolean {
-		return event.eventType === "app_mention" || event.upstreamGated === true;
+		return (
+			event.eventType === "app_mention" ||
+			event.upstreamGated === true ||
+			// A direct message has no @mention but should still start a session.
+			event.payload.channel_type === "im"
+		);
 	}
 
 	getThreadKey(event: SlackWebhookEvent): string {
+		// In a DM, key on the channel alone so the whole conversation maps to one
+		// session (resumed via --continue across messages), instead of a fresh
+		// amnesiac session per message.
+		if (event.payload.channel_type === "im") {
+			return `${event.payload.channel}:dm`;
+		}
 		const threadTs = event.payload.thread_ts || event.payload.ts;
 		return `${event.payload.channel}:${threadTs}`;
 	}
@@ -319,8 +330,12 @@ Supported mrkdwn syntax:
 				return;
 			}
 
-			// Thread the reply under the original message
-			const threadTs = event.payload.thread_ts || event.payload.ts;
+			// Thread the reply under the original message — except in a DM, where
+			// a top-level reply reads better than a thread.
+			const threadTs =
+				event.payload.channel_type === "im"
+					? event.payload.thread_ts
+					: event.payload.thread_ts || event.payload.ts;
 
 			await new SlackMessageService().postMessage({
 				token,
@@ -392,7 +407,10 @@ Supported mrkdwn syntax:
 			return;
 		}
 
-		const threadTs = event.payload.thread_ts || event.payload.ts;
+		const threadTs =
+			event.payload.channel_type === "im"
+				? event.payload.thread_ts
+				: event.payload.thread_ts || event.payload.ts;
 
 		await new SlackMessageService().postMessage({
 			token,

@@ -132,6 +132,8 @@ export interface SlackAppMentionEvent {
 	ts: string;
 	/** Channel ID where the mention occurred */
 	channel: string;
+	/** Conversation type — "im" for a DM, "channel"/"group"/"mpim" otherwise. */
+	channel_type?: string;
 	/** Thread timestamp - present if this is a threaded reply */
 	thread_ts?: string;
 	/** Event timestamp */
@@ -166,6 +168,8 @@ export interface SlackMessageEvent {
 	ts: string;
 	/** Channel ID where the message occurred */
 	channel: string;
+	/** Conversation type — "im" for a DM, "channel"/"group"/"mpim" otherwise. */
+	channel_type?: string;
 	/** Thread timestamp - present if this is a threaded reply */
 	thread_ts?: string;
 	/** Event timestamp */

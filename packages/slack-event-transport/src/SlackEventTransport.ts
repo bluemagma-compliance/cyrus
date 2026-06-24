@@ -392,7 +392,9 @@ export class SlackEventTransport extends EventEmitter {
 			);
 			return false;
 		}
-		if (!event.thread_ts) {
+		// DMs (channel_type "im") are top-level by nature — let them through so a
+		// DM can start a session, not just threaded follow-ups.
+		if (!event.thread_ts && event.channel_type !== "im") {
 			this.logger.debug(
 				`Ignoring non-threaded Slack message (channel ${event.channel})`,
 			);
